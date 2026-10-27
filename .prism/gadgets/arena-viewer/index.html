@@ -1,0 +1,164 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="prism-gadget://_sdk/base.css">
+<script src="prism-gadget://_sdk/prism.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box }
+  html, body { height: 100%; margin: 0; overflow: hidden; background: #0b0f17; }
+  #wrap { display: flex; height: 100%; min-width: 0; }
+  #stage { position: relative; flex: 1; min-width: 0; }
+  canvas { display: block; width: 100%; height: 100%; cursor: crosshair; }
+  #side { width: 250px; max-width: 40%; overflow: auto; padding: 8px; border-left: 1px solid #1d2533; font-size: 12px; }
+  #side h3 { margin: 6px 0 4px; font-size: 12px; color: #8aa0c0; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+  .row { display: flex; gap: 6px; padding: 3px 4px; border-radius: 4px; cursor: pointer; align-items: baseline; }
+  .row:hover { background: #162033; }
+  .row.on { background: #1c2b45; }
+  .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ms { color: #8aa0c0; font-variant-numeric: tabular-nums; }
+  .md { display: block; color: #9fd3a8; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #top { position: absolute; left: 8px; top: 8px; right: 8px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; pointer-events: none; }
+  #top > * { pointer-events: auto; }
+  #status { background: #0b0f17cc; padding: 4px 8px; border-radius: 6px; color: #c8d3e6; font-size: 12px; }
+  button { font-size: 12px; }
+  #empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; color: #8aa0c0; padding: 20px; font-size: 14px; }
+  .key { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div id="top"><span id="status">connecting…</span><button id="overview">Whole map</button><button id="zin">+</button><button id="zout">−</button></div>
+    <div id="empty">The arena isn't running.<br>Ask Claude to start an arena run, and it shows up here live.</div>
+  </div>
+  <div id="side">
+    <h3>Our bots</h3><div id="ours"></div>
+    <h3>Biggest players</h3><div id="board"></div>
+    <h3>Key</h3>
+    <div><span class="key" style="background:#5aa9ff"></span>our Mega Bots (mode below the name)</div>
+    <div><span class="key" style="background:#ff6b6b"></span>human-style hunters / teams</div>
+    <div><span class="key" style="background:#7d8798"></span>server bots</div>
+    <div><span class="key" style="background:#33cc66"></span>viruses</div>
+  </div>
+</div>
+<script>
+const cv = document.getElementById('cv'), g = cv.getContext('2d');
+let frame = null, modes = {}, follow = null, zoom = 1, ws = null, lastFrameAt = 0, view = null;
+const isOurs = n => /^Mega-/.test(n || '');
+const isHunter = n => /^(Hunter|Team)\d/.test(n || '');
+
+function connect() {
+  try { ws = new WebSocket('ws://127.0.0.1:47901'); } catch (_) { setTimeout(connect, 2000); return; }
+  ws.onmessage = ev => { try { frame = JSON.parse(ev.data); lastFrameAt = Date.now(); } catch (_) {} };
+  ws.onclose = () => { ws = null; setTimeout(connect, 1500); };
+  ws.onerror = () => { try { ws.close(); } catch (_) {} };
+}
+connect();
+async function pollModes() {
+  try { const r = await fetch('http://127.0.0.1:47800/arena/modes'); const j = await r.json(); modes = j.bots || {}; window.__arena = j; } catch (_) {}
+  setTimeout(pollModes, 700);
+}
+pollModes();
+
+function ownerCells(id) { return frame ? frame.players.filter(p => p[3] === id) : []; }
+function camera() {
+  const W = cv.width, H = cv.height, b = frame.border;
+  if (follow != null) {
+    const cs = ownerCells(follow);
+    if (cs.length) {
+      let x = 0, y = 0, m = 0, maxR = 0; for (const c of cs) { const w = c[2] * c[2]; x += c[0] * w; y += c[1] * w; m += w; maxR = Math.max(maxR, c[2]); }
+      x /= m; y /= m;
+      const span = Math.max(2400, maxR * 12) / zoom;
+      return { x, y, s: Math.min(W, H) / span };
+    }
+  }
+  return { x: b.x, y: b.y, s: Math.min(W / (b.w * 2), H / (b.h * 2)) * 0.98 * zoom };
+}
+function col(c) { return '#' + (c >>> 0).toString(16).padStart(6, '0'); }
+
+function draw() {
+  requestAnimationFrame(draw);
+  const dpr = window.devicePixelRatio || 1, r = cv.getBoundingClientRect();
+  if (cv.width !== Math.round(r.width * dpr) || cv.height !== Math.round(r.height * dpr)) { cv.width = Math.round(r.width * dpr); cv.height = Math.round(r.height * dpr); }
+  const live = frame && Date.now() - lastFrameAt < 3000;
+  document.getElementById('empty').style.display = live ? 'none' : 'flex';
+  g.fillStyle = '#0b0f17'; g.fillRect(0, 0, cv.width, cv.height);
+  if (!live) { document.getElementById('status').textContent = ws ? 'waiting for the arena…' : 'connecting…'; return; }
+  const cam = camera(), W = cv.width, H = cv.height;
+  const sx = x => (x - cam.x) * cam.s + W / 2, sy = y => (y - cam.y) * cam.s + H / 2;
+  view = { x: cam.x, y: cam.y, w: W / cam.s, h: H / cam.s };
+  const b = frame.border;
+  g.strokeStyle = '#2a3446'; g.lineWidth = 2; g.strokeRect(sx(b.x - b.w), sy(b.y - b.h), b.w * 2 * cam.s, b.h * 2 * cam.s);
+  // grid
+  g.strokeStyle = '#141b27'; g.lineWidth = 1;
+  const step = 1000; for (let x = Math.ceil((b.x - b.w) / step) * step; x < b.x + b.w; x += step) { g.beginPath(); g.moveTo(sx(x), sy(b.y - b.h)); g.lineTo(sx(x), sy(b.y + b.h)); g.stroke(); }
+  for (let y = Math.ceil((b.y - b.h) / step) * step; y < b.y + b.h; y += step) { g.beginPath(); g.moveTo(sx(b.x - b.w), sy(y)); g.lineTo(sx(b.x + b.w), sy(y)); g.stroke(); }
+  // pellets
+  const pel = frame.pellets || []; g.fillStyle = '#3d4a60';
+  const pr = Math.max(1, 5 * cam.s);
+  for (let i = 0; i < pel.length; i += 2) g.fillRect(sx(pel[i]) - pr / 2, sy(pel[i + 1]) - pr / 2, pr, pr);
+  // viruses, ejected mass, mother cells
+  for (const o of frame.other) {
+    const [x, y, s, t] = o;
+    g.beginPath(); g.arc(sx(x), sy(y), Math.max(1.5, s * cam.s), 0, Math.PI * 2);
+    if (t === 2) { g.fillStyle = '#33cc6644'; g.fill(); g.strokeStyle = '#33cc66'; g.lineWidth = Math.max(1, 3 * cam.s); g.stroke(); }
+    else if (t === 3) { g.fillStyle = '#e0c060'; g.fill(); }
+    else { g.fillStyle = '#a05050'; g.fill(); }
+  }
+  // players: smallest on top
+  const ps = frame.players.slice().sort((a, b) => b[2] - a[2]);
+  for (const p of ps) {
+    const [x, y, s, oid] = p, ow = frame.owners[oid] || ['', 0, 0, 0x888888];
+    const name = ow[0], ours = isOurs(name), hunter = isHunter(name), bot = ow[2];
+    g.beginPath(); g.arc(sx(x), sy(y), Math.max(2, s * cam.s), 0, Math.PI * 2);
+    g.fillStyle = ours ? '#5aa9ffcc' : hunter ? '#ff6b6bcc' : bot ? '#7d8798aa' : col(ow[3]) + 'cc'; g.fill();
+    if (oid === follow) { g.strokeStyle = '#ffffff'; g.lineWidth = 2; g.stroke(); }
+  }
+  // labels: one per owner, at its biggest cell
+  const best = {}; for (const p of frame.players) if (!best[p[3]] || p[2] > best[p[3]][2]) best[p[3]] = p;
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  for (const oid in best) {
+    const p = best[oid], ow = frame.owners[oid]; if (!ow) continue;
+    const R = p[2] * cam.s; if (R < 6 && +oid !== follow) continue;
+    const fs = Math.max(10, Math.min(22, R * 0.45)) * dpr * 0.8;
+    g.font = `600 ${fs}px system-ui, sans-serif`; g.fillStyle = '#ffffff';
+    g.fillText(ow[0] || '(no name)', sx(p[0]), sy(p[1]) - fs * 0.3);
+    g.font = `${fs * 0.8}px system-ui, sans-serif`; g.fillStyle = '#d6e2f5';
+    g.fillText(String(ow[1]), sx(p[0]), sy(p[1]) + fs * 0.7);
+    const md = modes[ow[0]]; if (md && md.mode) { g.fillStyle = '#9fd3a8'; g.font = `${Math.max(10 * dpr, fs * 0.7)}px system-ui, sans-serif`; g.fillText(md.mode.slice(0, 60), sx(p[0]), sy(p[1]) + R + fs * 0.9); }
+  }
+  const a = window.__arena || {};
+  document.getElementById('status').textContent = `arena live · ${Object.keys(frame.owners).length} players` + (a.compare && a.compare.endsAt > Date.now() ? ` · testing ${a.compare.setting} until ${new Date(a.compare.endsAt).toLocaleTimeString()}` : '') + (follow != null && frame.owners[follow] ? ` · following ${frame.owners[follow][0]}` : ' · whole map');
+}
+requestAnimationFrame(draw);
+setInterval(() => { if (ws && ws.readyState === 1 && view) ws.send(JSON.stringify({ view })); }, 300);
+
+function lists() {
+  if (!frame) return;
+  const own = Object.entries(frame.owners).map(([id, o]) => ({ id: +id, name: o[0], mass: o[1], bot: o[2] }));
+  own.sort((a, b) => b.mass - a.mass);
+  const row = (o, sub) => `<div class="row${o.id === follow ? ' on' : ''}" data-id="${o.id}"><span class="nm">${esc(o.name || '(no name)')}${sub ? `<span class="md">${esc(sub)}</span>` : ''}</span><span class="ms">${o.mass}</span></div>`;
+  document.getElementById('ours').innerHTML = own.filter(o => isOurs(o.name)).map(o => { const m = modes[o.name]; return row(o, m ? (m.label ? '[' + m.label + '] ' : '') + m.mode : ''); }).join('') || '<div class="md">none</div>';
+  document.getElementById('board').innerHTML = own.slice(0, 12).map(o => row(o, isHunter(o.name) ? 'human-style hunter' : o.bot ? 'server bot' : '')).join('');
+  for (const el of document.querySelectorAll('.row')) el.onclick = () => { follow = +el.dataset.id; zoom = 1; };
+}
+setInterval(lists, 500);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+cv.addEventListener('click', ev => {
+  if (!frame) return;
+  const r = cv.getBoundingClientRect(), dpr = window.devicePixelRatio || 1, cam = camera();
+  const wx = ((ev.clientX - r.left) * dpr - cv.width / 2) / cam.s + cam.x, wy = ((ev.clientY - r.top) * dpr - cv.height / 2) / cam.s + cam.y;
+  let hit = null; for (const p of frame.players) if (Math.hypot(p[0] - wx, p[1] - wy) <= Math.max(p[2], 60 / cam.s) && (!hit || p[2] < hit[2])) hit = p;
+  if (hit) { follow = hit[3]; zoom = 1; }
+});
+cv.addEventListener('wheel', ev => { ev.preventDefault(); zoom *= ev.deltaY < 0 ? 1.15 : 1 / 1.15; zoom = Math.max(0.2, Math.min(8, zoom)); }, { passive: false });
+document.getElementById('overview').onclick = () => { follow = null; zoom = 1; };
+document.getElementById('zin').onclick = () => { zoom = Math.min(8, zoom * 1.3); };
+document.getElementById('zout').onclick = () => { zoom = Math.max(0.2, zoom / 1.3); };
+prism.ready(() => {});
+</script>
+</body>
+</html>

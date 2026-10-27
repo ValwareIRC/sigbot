@@ -1,0 +1,319 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="prism-gadget://_sdk/base.css">
+<link rel="stylesheet" href="prism-gadget://_sdk/kit.css">
+<script src="prism-gadget://_sdk/prism.js"></script>
+<script src="prism-gadget://_sdk/kit.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box }
+  html, body { height: 100%; margin: 0 }
+  .k-body { overflow: auto; min-height: 0 }
+  .top-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; min-width: 0 }
+  .top-row select { min-width: 0; max-width: 100%; flex: 1 1 160px }
+  .map { width: 100%; aspect-ratio: 3 / 2; background: #0b0f17; border-radius: 8px; overflow: hidden; }
+  .map svg { width: 100%; height: 100%; display: block }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; margin: 8px 0 }
+  .stat { background: var(--panel, #141a24); border-radius: 8px; padding: 6px 10px; min-width: 0 }
+  .stat .v { font-size: 18px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+  .stat .l { font-size: 11px; opacity: .65 }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; opacity: .8; margin: 6px 0 }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: -1px }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 8px 0 }
+  .row > * { min-width: 0 }
+  .graph { width: 100%; height: 70px; display: block }
+  .log { max-height: 180px; overflow: auto; font-size: 12px }
+  .log div { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 2px 0; border-bottom: 1px solid #ffffff0d }
+  .item { cursor: pointer; padding: 8px 10px; border-radius: 8px; min-width: 0 }
+  .item:hover, .item.on { background: #ffffff10 }
+  .item .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+  .item .s { font-size: 12px; opacity: .65; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+  .split { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px }
+  @media (min-width: 760px) { .split.two { grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr) } }
+  input[type=number] { width: 80px }
+  input[type=range] { flex: 1 1 160px; min-width: 0 }
+  table { width: 100%; border-collapse: collapse; font-size: 13px }
+  td, th { text-align: left; padding: 4px 6px; border-bottom: 1px solid #ffffff10; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px }
+  tr.mega td { color: var(--accent) }
+  .cfg { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 4px 12px }
+  .cfg label { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 4px 0; min-width: 0; font-size: 13px }
+  .cfg label span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+  .cfg input[type=text] { width: 120px; min-width: 0 }
+  .muted { opacity: .65; font-size: 13px }
+  .caption { font-size: 13px; margin: 6px 0; min-height: 1.2em }
+  .tablewrap { overflow: auto }
+</style>
+</head>
+<body>
+<div class="k-app">
+  <div class="k-top">
+    <div class="k-title">Sigmally Lab</div>
+    <div class="top-row" style="flex:1">
+      <span id="conn" class="k-pill">no game</span>
+      <select id="client" title="Which game to watch"></select>
+    </div>
+  </div>
+  <div class="k-tabs" id="tabs"></div>
+  <div class="k-body" id="body"></div>
+</div>
+<script src="render.js"></script>
+<script>
+const { renderSnapshot, describeSnapshot, ROLE_COLORS, ROLE_NAMES } = window.SigRender;
+const { h, mount, ago } = window.kit;
+const S = { tab: 'live', clients: [], focus: null, snap: null, events: [], massHist: [], deaths: [], arena: null, cfg: null,
+  replay: null, replayFrame: 0, replayFile: null, playing: null, deathFilter: 'browser', cfgFilter: '' };
+
+const TABS = [['live', 'Live'], ['team', 'Team'], ['deaths', 'Deaths'], ['arena', 'Arena'], ['settings', 'Settings']];
+function drawTabs() {
+  const el = document.getElementById('tabs');
+  el.innerHTML = '';
+  for (const [id, label] of TABS) {
+    const b = h('div', { class: 'k-tab' + (S.tab === id ? ' on' : ''), onclick: () => { S.tab = id; drawTabs(); draw(); if (id === 'settings') loadCfg(); if (id === 'team') loadTeam(); } }, label);
+    el.appendChild(b);
+  }
+}
+function drawTop() {
+  const sel = document.getElementById('client');
+  sel.innerHTML = '';
+  for (const c of S.clients) {
+    const o = document.createElement('option');
+    o.value = c.id;
+    o.textContent = `${c.kind === 'arena' ? '🤖 ' : '🎮 '}${c.name}${c.label ? ' [' + c.label + ']' : ''} — ${c.mass} mass`;
+    if (c.id === S.focus) o.selected = true;
+    sel.appendChild(o);
+  }
+  if (!S.clients.length) { const o = document.createElement('option'); o.textContent = 'nothing connected'; sel.appendChild(o); }
+  const conn = document.getElementById('conn');
+  const games = S.clients.filter(c => c.kind === 'browser').length, bots = S.clients.length - games;
+  conn.className = 'k-pill ' + (S.clients.length ? 'ok' : 'warn');
+  conn.textContent = S.clients.length ? `${games} game${games === 1 ? '' : 's'}${bots ? `, ${bots} arena bot${bots === 1 ? '' : 's'}` : ''}` : 'no game';
+}
+document.getElementById('client').onchange = async e => {
+  const r = await prism.call('focus', { id: +e.target.value });
+  Object.assign(S, { focus: r.focus, snap: r.snap, events: r.events, massHist: r.massHist, cfg: r.cfg });
+  draw(); if (S.tab === 'settings') loadCfg();
+};
+
+// ---------------------------------------------------------------- live
+function legend() {
+  return h('div', { class: 'legend' }, ...[0, 1, 2, 3, 4, 5, 6].map(i => h('span', null, h('i', { style: `background:${ROLE_COLORS[i]}` }), ROLE_NAMES[i])));
+}
+function graph(hist) {
+  if (!hist || hist.length < 2) return h('div', { class: 'muted' }, 'Mass over time appears here once a game is running.');
+  const W = 600, H = 70, t0 = hist[0][0], t1 = hist[hist.length - 1][0] || t0 + 1, mx = Math.max(10, ...hist.map(p => p[1]));
+  const pts = hist.map(p => `${((p[0] - t0) / (t1 - t0 || 1) * W).toFixed(1)},${(H - 4 - p[1] / mx * (H - 10)).toFixed(1)}`).join(' ');
+  const el = document.createElement('div');
+  el.innerHTML = `<svg class="graph" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>
+    <div class="muted">Mass over the last ${Math.round((t1 - t0) / 60000) || '<1'} min · peak ${mx}</div>`;
+  return el;
+}
+function stat(l, v) { return h('div', { class: 'stat' }, h('div', { class: 'v' }, String(v)), h('div', { class: 'l' }, l)); }
+function liveView() {
+  const s = S.snap;
+  const c = S.clients.find(c => c.id === S.focus);
+  const map = h('div', { class: 'map', id: 'livemap' });
+  map.innerHTML = renderSnapshot(s, { width: 900, height: 600, empty: S.clients.length ? 'Waiting for the next update…' : 'Open one.sigmally.com with the Mega Bot, or start the arena.' });
+  const botOn = s ? s.bot : c && c.bot;
+  return [
+    h('div', { class: 'stats' }, stat('Mass', s ? s.mass : '—'), stat('Pieces', s ? s.pieces : '—'), stat('Doing', s ? (s.mode || '—') : '—'),
+      stat('Danger', s ? s.danger : '—'), stat('Ping', s ? s.rtt + ' ms' : '—'), stat('Deaths', c ? c.deaths : '—')),
+    map, legend(),
+    h('div', { class: 'row' },
+      h('button', { class: botOn ? '' : 'primary', disabled: !c, onclick: () => window.kit.act(() => prism.call('bot', { on: !botOn }), botOn ? 'Bot off' : 'Bot on') }, botOn ? 'Turn the bot off' : 'Turn the bot on'),
+      h('button', { disabled: !c, onclick: () => window.kit.act(() => prism.call('respawn', {}), 'Asked to respawn') }, 'Respawn'),
+      h('span', { class: 'muted' }, s ? describeSnapshot(s).split(';').slice(1, 3).join(';') : '')),
+    graph(S.massHist),
+    h('div', { class: 'k-card' }, h('div', { class: 'muted' }, 'What the bot just did'),
+      h('div', { class: 'log', id: 'evlog' }, ...(S.events.length ? S.events.slice().reverse().map(e => h('div', null, `${new Date(e.t).toLocaleTimeString()}  ${e.text}`)) : [h('div', { class: 'muted' }, 'Nothing yet.')]))),
+  ];
+}
+
+// ---------------------------------------------------------------- team journal
+// every team action the bots chose, and what it achieved a few seconds later
+async function loadTeam() { S.team = await prism.call('teamlog', { minutes: S.teamMinutes || 30 }); if (S.tab === 'team') draw(); }
+function verdictPill(v) {
+  const ok = v === 'worked' || v === 'ok', bad = /lost|died|fell short|missed|nothing/.test(v);
+  return h('span', { class: 'k-pill ' + (ok ? 'ok' : bad ? 'warn' : '') }, v);
+}
+function teamView() {
+  const T = S.team;
+  const range = h('div', { class: 'row' }, h('span', { class: 'muted' }, 'Look back:'),
+    ...[[10, '10 min'], [30, '30 min'], [120, '2 h'], [1440, '1 day']].map(([m, l]) =>
+      h('button', { class: (S.teamMinutes || 30) === m ? 'primary' : '', onclick: () => { S.teamMinutes = m; loadTeam(); } }, l)),
+    h('button', { onclick: loadTeam }, 'Refresh'));
+  if (!T) return [range, h('div', { class: 'k-empty' }, 'Loading…')];
+  if (!T.total) return [range, h('div', { class: 'k-empty' }, 'No team actions logged in this window yet. They appear as the two bots play together.')];
+  const rows = T.groups.map(g => ({ cells: [g.kind, g.n, Math.round(100 * g.worked / g.n) + '%',
+    Object.entries(g.verdicts).map(([v, n]) => `${v} ${n}`).join(', '),
+    Math.round(g.toMate / g.n), Math.round(g.fromMate / g.n), Math.round(g.toEnemy / g.n), Math.round(g.killed / g.n)] }));
+  const recent = T.recent.map(r => h('div', { class: 'item' },
+    h('div', { class: 't' }, verdictPill(r.verdict), ' ', r.kind),
+    h('div', { class: 's' }, `${new Date(r.t).toLocaleTimeString()} · ${r.client}#${r.cid} · into mate ${r.toMate}, from mate ${r.fromMate}, lost ${r.toEnemy}, killed ${r.killed}` +
+      ` · me ${r.myMass}→${r.myAfter}, ${r.mate || 'mate'} ${r.mateMass}→${r.mateAfter}${r.died ? ' · we died' : ''}` +
+      (r.info && Object.keys(r.info).length ? ' · ' + Object.entries(r.info).map(([k, v]) => `${k} ${v}`).join(', ') : ''))));
+  return [range,
+    h('div', { class: 'muted' }, `${T.total} team actions in the last ${T.minutes >= 60 ? Math.round(T.minutes / 60) + ' h' : T.minutes + ' min'}. Mass columns are per try.`),
+    h('div', { class: 'tablewrap' }, table(['Action', 'Tries', 'Worked', 'Outcomes', 'Into mate', 'From mate', 'Lost', 'Killed'], rows)),
+    h('button', { onclick: () => prism.agent.send(`In Sigmally Lab, look at the team journal (lab_teamlog, last ${S.teamMinutes || 30} min), find which team actions fail most and why, and fix the bot.`) }, 'Ask Claude about this'),
+    h('div', { class: 'k-card' }, h('div', { class: 'muted' }, 'Most recent'), h('div', null, ...recent))];
+}
+
+// ---------------------------------------------------------------- deaths
+function deathsView() {
+  const list = S.deaths.filter(d => S.deathFilter === 'all' || d.kind === S.deathFilter);
+  const filter = h('div', { class: 'row' }, ...[['browser', 'Your games'], ['arena', 'Arena'], ['all', 'All']].map(([k, l]) =>
+    h('button', { class: S.deathFilter === k ? 'primary' : '', onclick: () => { S.deathFilter = k; draw(); } }, l)));
+  const items = list.length ? list.slice(0, 150).map(d => h('div', { class: 'item' + (S.replayFile === d.file ? ' on' : ''), onclick: () => openReplay(d.file) },
+    h('div', { class: 't' }, d.cause), h('div', { class: 's' }, `${ago(d.t)} · ${d.client} · had ${d.mass} mass`))) :
+    [h('div', { class: 'k-empty' }, 'No deaths recorded here yet.')];
+  const left = h('div', null, filter, h('div', null, ...items));
+  const right = h('div', null);
+  if (S.replay) {
+    const fr = S.replay.frames || [];
+    const i = Math.min(S.replayFrame, fr.length - 1);
+    const f = fr[i], t0 = fr.length ? fr[fr.length - 1].t : 0;
+    const map = h('div', { class: 'map' });
+    map.innerHTML = renderSnapshot(f, { width: 900, height: 600, empty: 'No frames were recorded for this death.' });
+    const slider = h('input', { type: 'range', min: 0, max: Math.max(0, fr.length - 1), value: i, oninput: e => { S.replayFrame = +e.target.value; stopPlay(); draw(); } });
+    right.append(
+      h('div', { class: 'caption' }, `${S.replay.cause} · had ${S.replay.massBefore} mass`),
+      map,
+      h('div', { class: 'row' },
+        h('button', { onclick: togglePlay }, S.playing ? 'Pause' : 'Play'), slider,
+        h('span', { class: 'muted' }, f ? `${((f.t - t0) / 1000).toFixed(1)} s` : '')),
+      h('div', { class: 'caption muted' }, f ? describeSnapshot(f) : ''),
+      h('button', { onclick: () => prism.agent.send(`In Sigmally Lab, look at the death "${S.replay.cause}" (${S.replayFile}) with lab_replay, work out what went wrong and fix the bot.`) }, 'Ask Claude to look at this death'));
+  } else right.append(h('div', { class: 'k-empty' }, 'Pick a death to replay its last 10 seconds.'));
+  return [h('div', { class: 'split two' }, left, right)];
+}
+async function openReplay(file) {
+  stopPlay();
+  S.replayFile = file;
+  S.replay = await prism.call('death', { file });
+  S.replayFrame = Math.max(0, (S.replay?.frames?.length || 1) - 1);
+  draw();
+}
+function togglePlay() {
+  if (S.playing) return stopPlay(), draw();
+  if (!S.replay) return;
+  if (S.replayFrame >= (S.replay.frames.length - 1)) S.replayFrame = 0;
+  S.playing = setInterval(() => {
+    if (!S.replay || S.replayFrame >= S.replay.frames.length - 1) { stopPlay(); draw(); return; }
+    S.replayFrame++; draw();
+  }, 200);
+  draw();
+}
+function stopPlay() { if (S.playing) clearInterval(S.playing); S.playing = null; }
+
+// ---------------------------------------------------------------- arena
+function arenaView() {
+  const a = S.arena || { status: 'off', board: [], groups: [] };
+  const num = (id, v, min, max) => h('input', { type: 'number', id, value: v, min, max });
+  const running = a.status === 'running' || a.status === 'starting';
+  const controls = h('div', { class: 'k-card' },
+    h('div', { class: 'muted' }, 'The real Sigmally server code running on this computer, with its own bots and headless Mega Bots.'),
+    h('div', { class: 'row' },
+      h('label', null, 'Server bots ', num('a-sb', a.opts?.serverBots ?? 10, 0, 60)),
+      h('label', null, 'Mega Bots ', num('a-mb', a.opts?.groups?.[0]?.count ?? 2, 1, 20)),
+      h('label', null, 'Piece limit ', num('a-mc', a.opts?.maxCells ?? 8, 1, 64))),
+    h('div', { class: 'row' },
+      h('span', { class: 'k-pill ' + (a.status === 'running' ? 'ok' : a.status === 'starting' ? 'warn' : '') }, a.status === 'off' ? 'stopped' : a.status),
+      h('button', { class: 'primary', onclick: () => window.kit.act(() => prism.call('arenaStart', { serverBots: +val('a-sb'), maxCells: +val('a-mc'),
+        groups: [{ label: 'default', cfg: {}, count: +val('a-mb') }] }), 'Arena started') }, running ? 'Restart' : 'Start'),
+      h('button', { disabled: !running, onclick: () => window.kit.act(() => prism.call('arenaStop', {}), 'Arena stopped') }, 'Stop')));
+  const board = h('div', { class: 'k-card' }, h('div', { class: 'muted' }, 'Leaderboard'),
+    a.board && a.board.length ? h('div', { class: 'tablewrap' }, table(['#', 'Player', 'Mass', 'Pieces'], a.board.slice(0, 20).map((p, i) => ({ cls: p.bot ? '' : 'mega', cells: [i + 1, p.name + (p.bot ? '' : ' ★'), p.mass, p.cells] }))))
+      : h('div', { class: 'muted' }, running ? 'Waiting for players…' : 'Start the arena to see it here.'));
+  const groups = a.groups && a.groups.length ? h('div', { class: 'k-card' }, h('div', { class: 'muted' }, 'Mega Bots so far (average mass counts time spent dead as 0)'),
+    h('div', { class: 'tablewrap' }, table(['Group', 'Bots', 'Avg mass', 'Deaths/min', 'Peak'], a.groups.map(g => ({ cells: [g.label || 'default', g.bots, g.avgMass, g.deathsPerMin, g.peak] }))))) : null;
+  const keys = S.cfg ? Object.keys(S.cfg).filter(k => typeof S.cfg[k] === 'number' || typeof S.cfg[k] === 'boolean') : [];
+  const dl = h('datalist', { id: 'cfgkeys' }, ...keys.map(k => h('option', { value: k })));
+  const cmp = a.compare;
+  const compare = h('div', { class: 'k-card' },
+    h('div', { class: 'muted' }, 'Compare a setting: one group of Mega Bots per value, same server, same time.'),
+    h('div', { class: 'row' },
+      h('input', { id: 'c-set', list: 'cfgkeys', placeholder: 'setting, e.g. dangerWeight', value: cmp?.setting || '', style: 'flex:1 1 160px' }), dl,
+      h('input', { id: 'c-vals', placeholder: 'values, e.g. 2, 3, 4', value: cmp?.values ? cmp.values.join(', ') : '', style: 'flex:1 1 140px' })),
+    h('div', { class: 'row' },
+      h('label', null, 'Minutes ', num('c-min', cmp?.minutes ?? 3, 1, 120)),
+      h('label', null, 'Bots per value ', num('c-bpv', cmp?.botsPerValue ?? 3, 1, 10)),
+      h('button', { class: 'primary', onclick: () => {
+        const vals = val('c-vals').split(',').map(s => s.trim()).filter(Boolean).map(s => (s === 'true' ? true : s === 'false' ? false : isNaN(+s) ? s : +s));
+        window.kit.act(() => prism.call('compare', { setting: val('c-set').trim(), values: vals, minutes: +val('c-min'), botsPerValue: +val('c-bpv'),
+          serverBots: +val('a-sb'), maxCells: +val('a-mc') }), 'Comparison started');
+      } }, 'Run comparison')),
+    cmp && cmp.error ? h('div', { class: 'muted', style: 'color:var(--rose)' }, "Didn't finish: " + cmp.error) :
+    cmp ? (cmp.results ? h('div', { class: 'tablewrap' }, table(['Rank', 'Value', 'Avg mass', 'Deaths/min', 'Peak'], cmp.results.map((g, i) => ({ cells: [i + 1, g.label, g.avgMass, g.deathsPerMin, g.peak] }))))
+      : h('div', { class: 'muted' }, `Running until ${new Date(cmp.endsAt).toLocaleTimeString()}…`)) : null);
+  const log = a.log && a.log.length ? h('div', { class: 'k-card' }, h('div', { class: 'muted' }, 'Arena log'), h('div', { class: 'log' }, ...a.log.slice().reverse().map(l => h('div', null, l)))) : null;
+  return [controls, board, groups, compare, log].filter(Boolean);
+}
+const val = id => (document.getElementById(id) || {}).value || '';
+function table(head, rows) {
+  const t = h('table');
+  t.appendChild(h('tr', null, ...head.map(x => h('th', null, x))));
+  for (const r of rows) t.appendChild(h('tr', { class: r.cls || '' }, ...r.cells.map(x => h('td', { title: String(x) }, String(x)))));
+  return t;
+}
+
+// ---------------------------------------------------------------- settings
+async function loadCfg() {
+  const r = await prism.call('getCfg', { target: 'focus' });
+  if (r && r.cfg) { S.cfg = r.cfg; S.defaults = r.defaults; }
+  if (S.tab === 'settings') draw();
+}
+function settingsView() {
+  if (!S.cfg) return [h('div', { class: 'k-empty' }, S.clients.length ? 'Loading settings…' : 'Connect a game to change its settings.')];
+  const filter = h('input', { placeholder: 'filter settings', value: S.cfgFilter, oninput: e => { S.cfgFilter = e.target.value; draw(); requestAnimationFrame(() => { const f = document.getElementById('cfgf'); if (f) { f.focus(); f.selectionStart = f.selectionEnd = f.value.length; } }); }, id: 'cfgf', style: 'width:100%' });
+  const rows = Object.entries(S.cfg).filter(([k, v]) => k !== 'keys' && typeof v !== 'object' && k.toLowerCase().includes(S.cfgFilter.toLowerCase())).map(([k, v]) => {
+    const changed = S.defaults && JSON.stringify(S.defaults[k]) !== JSON.stringify(v);
+    const send = value => window.kit.act(async () => { await prism.call('setCfg', { key: k, value, target: 'focus' }); S.cfg[k] = value; draw(); }, `${k} = ${value}`);
+    const input = typeof v === 'boolean' ? h('input', { type: 'checkbox', checked: v, onchange: e => send(e.target.checked) })
+      : typeof v === 'number' ? h('input', { type: 'number', value: v, step: 'any', onchange: e => send(+e.target.value) })
+      : h('input', { type: 'text', value: v, onchange: e => send(e.target.value) });
+    return h('label', { title: changed ? `default ${JSON.stringify(S.defaults[k])}` : '' }, h('span', { style: changed ? 'color:var(--amber)' : '' }, k), input);
+  });
+  return [h('div', { class: 'muted' }, 'Changes apply to the selected game right away. Changed ones are highlighted.'), filter, h('div', { class: 'cfg' }, ...rows)];
+}
+
+// ---------------------------------------------------------------- render + events
+function draw() {
+  drawTop();
+  const body = document.getElementById('body');
+  const view = S.tab === 'live' ? liveView() : S.tab === 'team' ? teamView() : S.tab === 'deaths' ? deathsView() : S.tab === 'arena' ? arenaView() : settingsView();
+  // keep focus and typing intact on the arena/settings forms: only redraw them when nothing is being edited
+  const active = document.activeElement;
+  if ((S.tab === 'arena' || S.tab === 'settings') && active && active.tagName === 'INPUT' && body.contains(active) && active.id !== 'cfgf') return;
+  body.innerHTML = '';
+  mount(body, ...view);
+}
+let pendingDraw = false;
+const soon = () => { if (!pendingDraw) { pendingDraw = true; requestAnimationFrame(() => { pendingDraw = false; draw(); }); } };
+
+prism.ready(async () => {
+  drawTabs();
+  const st = await prism.call('state', {});
+  Object.assign(S, { clients: st.clients, focus: st.focus, snap: st.snap, events: st.events, massHist: st.massHist, deaths: st.deaths, arena: st.arena, cfg: st.cfg });
+  draw();
+  prism.on('clients', d => { S.clients = d.clients; if (d.focus !== S.focus) { S.focus = d.focus; prism.call('focus', { id: d.focus }).then(r => { Object.assign(S, { snap: r.snap, events: r.events, massHist: r.massHist, cfg: r.cfg }); soon(); }); } drawTop(); });
+  prism.on('snap', d => {
+    if (d.id !== S.focus) return;
+    S.snap = d.snap;
+    const last = S.massHist[S.massHist.length - 1];
+    if (!last || d.snap.t - last[0] >= 1000) { S.massHist.push([d.snap.t, d.snap.mass]); if (S.massHist.length > 900) S.massHist.shift(); }
+    if (S.tab === 'live') {
+      // cheap path: just repaint the map and stats
+      const m = document.getElementById('livemap');
+      if (m) m.innerHTML = renderSnapshot(d.snap, { width: 900, height: 600 });
+      if (!S._lastFull || Date.now() - S._lastFull > 1000) { S._lastFull = Date.now(); soon(); }
+    }
+  });
+  prism.on('event', d => { if (d.id === S.focus) { S.events.push(d); if (S.events.length > 60) S.events.shift(); if (S.tab === 'live') soon(); } });
+  prism.on('death', d => { S.deaths.unshift(d); if (S.tab === 'deaths') soon(); });
+  prism.on('teamlog', () => { if (S.tab === 'team') { clearTimeout(S.teamT); S.teamT = setTimeout(loadTeam, 800); } });
+  prism.on('arena', a => { S.arena = a; if (S.tab === 'arena') soon(); });
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+{
+  "id": "tab-status",
+  "name": "Tab status",
+  "description": "Each Mega Bot game tab: its script version and whether it answers remote commands, so stale tabs stand out after a patch.",
+  "backend": "backend.mjs",
+  "permissions": { "network": true },
+  "widget": { "title": "Tabs", "handler": "widget", "refreshSeconds": 30 }
+}

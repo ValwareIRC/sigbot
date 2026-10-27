@@ -1,0 +1,8 @@
+{
+    "id": "sigmally-lab",
+    "name": "Sigmally Lab",
+    "description": "Live view of the Mega Bot in your game, death replays, live settings, and a local arena on the real server code for testing and tuning.",
+    "backend": "backend.mjs",
+    "dependencies": { "ws": "^8", "@resvg/resvg-js": "^2" },
+    "permissions": { "shell": true, "network": true, "workspace": "read" }
+}

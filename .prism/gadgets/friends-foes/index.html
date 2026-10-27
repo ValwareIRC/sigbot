@@ -1,0 +1,80 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="prism-gadget://_sdk/base.css">
+<link rel="stylesheet" href="prism-gadget://_sdk/kit.css">
+<script src="prism-gadget://_sdk/prism.js"></script>
+<script src="prism-gadget://_sdk/kit.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box }
+html, body { height: 100%; margin: 0 }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; min-width: 0 }
+.k-grow { flex: 1; min-width: 0 }
+.name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 15px }
+.item { display: flex; gap: 6px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line, rgba(127,127,127,.2)) }
+.item:last-child { border-bottom: 0 }
+h3 { margin: 0 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; opacity: .75 }
+.vip { border-left: 3px solid var(--amber) }
+.friends { border-left: 3px solid #5ad1ff }
+.enemies { border-left: 3px solid var(--rose) }
+button { min-height: 34px }
+.seg button.on { outline: 2px solid currentColor }
+input[type=text] { flex: 1; min-width: 0; min-height: 34px }
+.why { font-size: 12px; opacity: .65; white-space: nowrap }
+.note { font-size: 12px; opacity: .75; margin-top: 6px }
+</style></head>
+<body>
+<div class="k-app">
+  <div class="k-top"><div class="k-title">Friends &amp; foes</div><div class="k-grow dim" id="sub"></div></div>
+  <div class="k-body" id="body"><div class="k-empty">Loading…</div></div>
+</div>
+<script>
+const { h, mount } = window.kit;
+const body = document.getElementById('body'), sub = document.getElementById('sub');
+let d = null, typed = '';
+const call = async (m, a) => { d = await prism.call(m, a); render(); };
+function person(name, right) { return h('div', { class: 'item' }, h('div', { class: 'name', title: name }, name), ...right); }
+function render() {
+  if (!d) return;
+  if (d.error) { sub.textContent = ''; return mount(body, h('div', { class: 'k-empty' }, d.error)); }
+  sub.textContent = `${d.tabs || 0} game tab${d.tabs === 1 ? '' : 's'} get these`;
+  const vipOn = d.vipName && d.vipMode;
+  const vipCard = h('div', { class: 'k-card vip' },
+    h('h3', {}, 'VIP: all bots work for one player'),
+    vipOn ? h('div', { class: 'row' }, h('div', { class: 'name' }, d.vipName),
+      h('span', { class: 'k-pill ' + (d.vipMode === 'feed' ? 'warn' : 'ok') }, d.vipMode === 'feed' ? 'Bots feed them' : 'Bots protect them')) : h('div', { class: 'dim' }, 'Nobody. Pick a friend below.'),
+    vipOn ? h('div', { class: 'row seg', style: 'margin-top:8px' },
+      h('button', { class: d.vipMode === 'feed' ? 'on primary' : '', onclick: () => call('vip', { name: d.vipName, mode: 'feed' }) }, 'Feed (dive in)'),
+      h('button', { class: d.vipMode === 'protect' ? 'on primary' : '', onclick: () => call('vip', { name: d.vipName, mode: 'protect' }) }, 'Protect'),
+      h('button', { onclick: () => call('vip', { mode: '' }) }, 'Stop')) : null,
+    h('div', { class: 'note' }, 'In game: point at a player and press U (feed, then protect, then off).'));
+  const friends = h('div', { class: 'k-card friends' }, h('h3', {}, `Friends (${d.friends.length}): never targeted`),
+    d.friends.length ? null : h('div', { class: 'dim' }, 'None yet.'),
+    ...d.friends.map(n => person(n, [
+      h('button', { onclick: () => call('vip', { name: n, mode: 'feed' }) }, 'Feed'),
+      h('button', { onclick: () => call('vip', { name: n, mode: 'protect' }) }, 'Protect'),
+      h('button', { title: 'take off the list', onclick: () => call('role', { name: n, role: 'none' }) }, '✕')])));
+  const enemies = h('div', { class: 'k-card enemies' }, h('h3', {}, `Enemies (${d.enemies.length}): go after them`),
+    d.enemies.length ? null : h('div', { class: 'dim' }, 'None yet.'),
+    ...d.enemies.map(n => person(n, [h('button', { title: 'take off the list', onclick: () => call('role', { name: n, role: 'none' }) }, '✕')])));
+  const inp = h('input', { type: 'text', placeholder: 'Exact name as in the game', value: typed, oninput: e => typed = e.target.value });
+  const addCard = h('div', { class: 'k-card' }, h('h3', {}, 'Add a player'),
+    h('div', { class: 'row' }, inp),
+    h('div', { class: 'row', style: 'margin-top:8px' },
+      h('button', { class: 'primary', onclick: () => { const n = typed.trim(); if (n) { typed = ''; call('role', { name: n, role: 'friend' }); } } }, 'Add friend'),
+      h('button', { onclick: () => { const n = typed.trim(); if (n) { typed = ''; call('role', { name: n, role: 'enemy' }); } } }, 'Add enemy')),
+    h('div', { class: 'note' }, 'In game: point at a player and press L (friend, then enemy, then off).'));
+  const listed = new Set([...d.friends, ...d.enemies]);
+  const seen = (d.seen || []).filter(s => !listed.has(s.name));
+  const seenCard = h('div', { class: 'k-card' }, h('h3', {}, 'Seen lately'),
+    seen.length ? null : h('div', { class: 'dim' }, 'Nobody new.'),
+    ...seen.slice(0, 30).map(s => person(s.name, [h('span', { class: 'why' }, s.why),
+      h('button', { onclick: () => call('role', { name: s.name, role: 'friend' }) }, 'Friend'),
+      h('button', { onclick: () => call('role', { name: s.name, role: 'enemy' }) }, 'Enemy')])));
+  mount(body, h('div', { class: 'grid' }, vipCard, addCard, friends, enemies, seenCard));
+}
+prism.on('lists', x => { d = x; if (document.activeElement && document.activeElement.tagName === 'INPUT') return; render(); });
+prism.ready(async () => { d = await prism.call('state'); render(); });
+</script>
+</body></html>

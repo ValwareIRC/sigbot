@@ -1,0 +1,8 @@
+{
+  "id": "friends-foes",
+  "name": "Friends & foes",
+  "description": "Sigmally: players our bots team with (never targeted), enemies they go after, and a VIP every bot feeds or protects. Shared by all game tabs through the Lab.",
+  "backend": "backend.mjs",
+  "permissions": { "network": true },
+  "widget": { "title": "Friends & foes", "handler": "widget", "refreshSeconds": 30 }
+}

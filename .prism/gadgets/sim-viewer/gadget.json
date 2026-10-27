@@ -1,0 +1,8 @@
+{
+  "id": "sim-viewer",
+  "name": "Sim viewer",
+  "description": "Runs a Mega Bot team scene on the real Sigmally server code (the sig-server repo, in-process) and plays it back: every piece, where each bot is aiming, what it says it's doing, eats and splits.",
+  "backend": "backend.mjs",
+  "agent": "Use to show the user a behaviour in the team sim: sim_scenes lists scenes, sim_run runs one (any bot version file) and shows it in the panel; the user watches and can tell you what's wrong.",
+  "permissions": { "shell": true, "workspace": "read" }
+}

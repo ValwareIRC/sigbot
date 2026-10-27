@@ -1,0 +1,6 @@
+{
+  "id": "arena-viewer",
+  "name": "Arena viewer",
+  "description": "Watch the Sigmally Lab arena live: the real server running on this computer, every player and virus, our Mega Bots labelled with what they're doing. Click a cell (or a name in the list) to follow it.",
+  "permissions": { "network": true }
+}

@@ -1,0 +1,268 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="prism-gadget://_sdk/base.css">
+<link rel="stylesheet" href="prism-gadget://_sdk/kit.css">
+<script src="prism-gadget://_sdk/prism.js"></script>
+<script src="prism-gadget://_sdk/kit.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box }
+  html, body { height: 100%; margin: 0 }
+  .k-body { overflow: auto; min-height: 0 }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 6px }
+  .controls > * { min-width: 0 }
+  .controls select { flex: 1 1 150px; max-width: 280px }
+  .controls input[type=number] { width: 76px }
+  .controls label { display: flex; gap: 6px; align-items: center; font-size: 13px }
+  .desc { font-size: 13px; opacity: .75; margin: 2px 0 8px; min-height: 1.2em }
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px }
+  @media (min-width: 900px) { .layout { grid-template-columns: minmax(0, 2.2fr) minmax(240px, 1fr) } }
+  .stage { position: relative; width: 100%; aspect-ratio: 3 / 2; background: #0b0f17; border-radius: 8px; overflow: hidden }
+  .stage canvas { width: 100%; height: 100%; display: block }
+  .hud { position: absolute; left: 8px; top: 8px; font-size: 12px; background: #000a; padding: 4px 8px; border-radius: 6px; pointer-events: none }
+  .player { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 6px 0 }
+  .player input[type=range] { flex: 1 1 160px; min-width: 0 }
+  .player .t { font-size: 12px; opacity: .7; font-variant-numeric: tabular-nums; white-space: nowrap }
+  .side .k-card { margin-bottom: 8px; min-width: 0 }
+  .card-h { font-size: 12px; opacity: .65; margin-bottom: 4px }
+  .who { display: flex; gap: 8px; align-items: baseline; min-width: 0; padding: 3px 0 }
+  .who i { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; display: inline-block }
+  .who .n { font-weight: 600; flex: 0 0 auto }
+  .who .m { font-size: 13px; opacity: .85; min-width: 0; overflow-wrap: anywhere }
+  .ev { font-size: 12.5px; padding: 3px 4px; border-radius: 4px; cursor: pointer; display: flex; gap: 6px; min-width: 0 }
+  .ev:hover { background: #ffffff10 }
+  .ev .tt { opacity: .55; flex: 0 0 auto; font-variant-numeric: tabular-nums }
+  .ev .x { min-width: 0; overflow-wrap: anywhere }
+  .ev.now { background: #ffffff18 }
+  .evs { max-height: 260px; overflow: auto }
+  .sum { font-size: 12.5px; white-space: pre-wrap; overflow-wrap: anywhere; opacity: .85 }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; opacity: .8; margin: 4px 0 }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: -1px }
+  .muted { opacity: .65; font-size: 13px }
+</style>
+</head>
+<body>
+<div class="k-app">
+  <div class="k-top"><div class="k-title">Sim viewer</div><span id="st" class="k-pill">ready</span></div>
+  <div class="k-body">
+    <div class="controls">
+      <select id="scene" title="Scene"></select>
+      <select id="version" title="Bot version"></select>
+      <label>Seconds <input id="secs" type="number" min="1" max="60" value="8"></label>
+      <label>Seed <input id="seed" type="number" min="1" max="999" value="1"></label>
+      <button id="go" class="primary">Run</button>
+    </div>
+    <div id="desc" class="desc"></div>
+    <div class="layout">
+      <div>
+        <div class="stage"><canvas id="cv" width="1200" height="800"></canvas><div id="hud" class="hud">Pick a scene and press Run.</div></div>
+        <div class="player">
+          <button id="play">Play</button>
+          <select id="speed" title="Speed"><option value="0.25">¼×</option><option value="0.5">½×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select>
+          <input id="scrub" type="range" min="0" max="0" value="0">
+          <span id="tt" class="t"></span>
+          <label class="muted"><input id="fit" type="checkbox"> show everyone</label>
+        </div>
+        <div id="legend" class="legend"></div>
+      </div>
+      <div class="side">
+        <div class="k-card"><div class="card-h">What each bot is doing</div><div id="doing" class="muted">—</div></div>
+        <div class="k-card"><div class="card-h">Events (click to jump)</div><div id="events" class="evs muted">—</div></div>
+        <div class="k-card"><div class="card-h">How it ended</div><div id="sum" class="sum muted">—</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const V = { info: null, run: null, frame: 0, playing: false, speed: 1, acc: 0, lastT: 0, cam: null, evList: [] };
+const COLORS = { Lead: '#ff7a6b', Help: '#4fd1a5', Third: '#6fa8ff', Fourth: '#e6c14f' };
+const botsOf = () => V.run ? V.run.data.owners.filter(o => o.bot).map(o => o.name) : ['Lead', 'Help'];
+const hex = n => '#' + (n >>> 0).toString(16).padStart(6, '0').slice(-6);
+function colorOf(owner) {
+  if (COLORS[owner]) return COLORS[owner];
+  const o = V.run && V.run.data.owners.find(x => x.name === owner);
+  return o ? hex(o.col) : '#9aa4b2';
+}
+
+async function loadInfo() {
+  V.info = await prism.call('info', {});
+  const sc = $('scene'), vs = $('version');
+  const keepS = sc.value || (await prism.state.get('scene', 'real:dna')), keepV = vs.value || (await prism.state.get('version', 'dev'));
+  sc.innerHTML = ''; vs.innerHTML = '';
+  for (const s of V.info.scenes) { const o = document.createElement('option'); o.value = s.name; o.textContent = s.label || s.name; sc.appendChild(o); }
+  for (const v of V.info.versions) { const o = document.createElement('option'); o.value = v.id; o.textContent = v.label + (v.botVersion ? ' · ' + v.botVersion : ''); vs.appendChild(o); }
+  if ([...sc.options].some(o => o.value === keepS)) sc.value = keepS;
+  if ([...vs.options].some(o => o.value === keepV)) vs.value = keepV;
+  showDesc();
+  setStatus(V.info.running);
+}
+function showDesc() { const s = V.info && V.info.scenes.find(x => x.name === $('scene').value); $('desc').textContent = s && s.desc ? s.desc : ''; }
+// events from the real-server sim ("tN: X ate Y piece (m)", "tN X x1") and the old sim share these formats
+function setStatus(running) {
+  const st = $('st');
+  if (running) { st.className = 'k-pill warn'; st.textContent = 'running ' + running.scene + '…'; $('go').disabled = true; }
+  else { st.className = 'k-pill ' + (V.run ? 'ok' : ''); st.textContent = V.run ? 'ready' : 'no run yet'; $('go').disabled = false; }
+}
+
+async function go() {
+  const args = { scene: $('scene').value, version: $('version').value, ticks: Math.round((+$('secs').value || 8) * 25), seed: +$('seed').value || 1 };
+  prism.state.set('scene', args.scene); prism.state.set('version', args.version);
+  setStatus({ scene: args.scene });
+  const r = await prism.call('run', args);
+  if (r && r.error) { setStatus(null); $('hud').textContent = r.error; return; }
+  show(r);
+}
+function show(r) {
+  if (!r || !r.data) return;
+  V.run = r; V.frame = 0; V.playing = false; V.cam = null; $('play').textContent = 'Play';
+  const n = r.data.frames.length;
+  $('scrub').max = String(Math.max(0, n - 1)); $('scrub').value = '0';
+  // events: eats, splits, relay turns, sorted by tick
+  const ev = [];
+  for (const e of r.data.events) { const m = /^t(\d+):?\s*(.*)$/.exec(e); if (m) ev.push({ t: +m[1], text: m[2] }); }
+  for (const e of r.data.splits) { const m = /^t(\d+)\s+(\S+)\s+x(\d+)/.exec(e); if (m) ev.push({ t: +m[1], text: `${m[2]} split${+m[3] > 1 ? ' ×' + m[3] : ''}` }); }
+  for (const e of r.data.relay) { const m = /^t(\d+)\s+(\S+) steps.*?Lead=(\d+) Help=(\d+)/.exec(e); if (m) ev.push({ t: +m[1], text: `DNA: ${m[2]}'s turn (Lead ${m[3]}, Help ${m[4]})`, relay: true }); }
+  ev.sort((a, b) => a.t - b.t);
+  V.evList = ev;
+  const box = $('events'); box.innerHTML = ''; box.className = 'evs';
+  if (!ev.length) { box.className = 'evs muted'; box.textContent = 'No eats, splits or relay turns.'; }
+  for (const e of ev) {
+    const d = document.createElement('div'); d.className = 'ev'; d.dataset.t = e.t;
+    d.innerHTML = `<span class="tt">${(e.t / 25).toFixed(1)}s</span><span class="x"></span>`; d.querySelector('.x').textContent = e.text;
+    d.onclick = () => { seekTick(e.t - 10); };
+    box.appendChild(d);
+  }
+  $('sum').className = 'sum';
+  $('sum').textContent = `${r.label || r.scene} · ${r.versionLabel} (bot ${r.botVersion}) · seed ${r.seed}\n` + (r.summary.join('\n') || '') + (r.journal.length ? '\n\nTeam journal:\n' + r.journal.slice(0, 10).join('\n') : '');
+  const owners = r.data.owners;
+  $('legend').innerHTML = owners.map(o => `<span><i style="background:${colorOf(o.name)}"></i>${o.name}${o.bot ? ' (bot)' : ''}</span>`).join('') + '<span><i style="background:#5fdc6a"></i>virus</span><span>dashed line = where a bot aims · mouse wheel zooms, double-click resets</span>';
+  setStatus(null);
+  draw();
+}
+function seekTick(t) {
+  const fr = V.run.data.frames; let i = fr.findIndex(f => f.t >= t); if (i < 0) i = fr.length - 1;
+  V.frame = Math.max(0, i); $('scrub').value = String(V.frame); draw();
+}
+
+// ---------------------------------------------------------------- drawing
+function camera(f) {
+  const cs = f.c, B = V.run.data.border;
+  const bots = botsOf(); const pick = $('fit').checked ? cs.filter(c => c[4] === 'p') : cs.filter(c => bots.includes(c[5]));
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const c of (pick.length ? pick : cs)) { x0 = Math.min(x0, c[1] - c[3]); y0 = Math.min(y0, c[2] - c[3]); x1 = Math.max(x1, c[1] + c[3]); y1 = Math.max(y1, c[2] + c[3]); }
+  if (!isFinite(x0)) { x0 = -B; y0 = -B; x1 = B; y1 = B; }
+  const pad = $('fit').checked ? 300 : 900;
+  let cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, w = Math.max(x1 - x0 + pad * 2, 2400), h = Math.max(y1 - y0 + pad * 2, 1600);
+  if (w / h > 1.5) h = w / 1.5; else w = h * 1.5;
+  const want = { cx, cy, w };
+  if (!V.cam) V.cam = want; else { const k = 0.15; V.cam = { cx: V.cam.cx + (cx - V.cam.cx) * k, cy: V.cam.cy + (cy - V.cam.cy) * k, w: V.cam.w + (w - V.cam.w) * k }; }
+  return { cx: V.cam.cx, cy: V.cam.cy, w: V.cam.w * (V.zoom || 1) };
+}
+function draw() {
+  const cv = $('cv'), g = cv.getContext('2d');
+  const W = cv.width, H = cv.height;
+  g.fillStyle = '#0b0f17'; g.fillRect(0, 0, W, H);
+  if (!V.run) return;
+  const fr = V.run.data.frames, f = fr[V.frame]; if (!f) return;
+  const cam = camera(f), sc = W / cam.w;
+  const X = x => (x - cam.cx) * sc + W / 2, Y = y => (y - cam.cy) * sc + H / 2;
+  // grid
+  g.strokeStyle = '#ffffff0d'; g.lineWidth = 1;
+  const step = 500, gx0 = Math.floor((cam.cx - cam.w / 2) / step) * step, gy0 = Math.floor((cam.cy - cam.w / 3) / step) * step;
+  for (let x = gx0; x < cam.cx + cam.w / 2; x += step) { g.beginPath(); g.moveTo(X(x), 0); g.lineTo(X(x), H); g.stroke(); }
+  for (let y = gy0; y < cam.cy + cam.w / 3; y += step) { g.beginPath(); g.moveTo(0, Y(y)); g.lineTo(W, Y(y)); g.stroke(); }
+  // border
+  const B = V.run.data.border;
+  g.strokeStyle = '#f0b44c'; g.lineWidth = 3; g.strokeRect(X(-B), Y(-B), 2 * B * sc, 2 * B * sc);
+  // cells: big first so small ones stay visible
+  const cs = f.c.slice().sort((a, b) => b[3] - a[3]);
+  for (const c of cs) {
+    const [id, x, y, s, kind, owner] = c, r = Math.max(1.5, s * sc);
+    g.beginPath(); g.arc(X(x), Y(y), r, 0, Math.PI * 2);
+    if (kind === 'f') { g.fillStyle = '#8aa0ff99'; g.fill(); continue; }   // map food (pellets)
+    if (kind === 'v') { g.fillStyle = '#5fdc6a55'; g.fill(); g.setLineDash([4, 3]); g.strokeStyle = '#5fdc6a'; g.lineWidth = 2; g.stroke(); g.setLineDash([]); continue; }
+    if (kind === 'e') { g.fillStyle = colorOf(owner); g.globalAlpha = 0.8; g.fill(); g.globalAlpha = 1; continue; }
+    const col = colorOf(owner);
+    g.fillStyle = col + (botsOf().includes(owner) ? 'cc' : '99'); g.fill();
+    g.strokeStyle = col; g.lineWidth = 2; g.stroke();
+    if (r > 14) {
+      g.fillStyle = '#fff'; g.font = `${Math.max(10, Math.min(22, r / 3))}px system-ui`; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText(owner, X(x), Y(y) - (r > 28 ? 8 : 0));
+      if (r > 28) { g.font = `${Math.max(9, Math.min(16, r / 4))}px system-ui`; g.fillStyle = '#ffffffb0'; g.fillText(String(Math.round(s * s / 100)), X(x), Y(y) + 10); }
+    }
+  }
+  // aims: dashed line from each bot's centre of mass to where it points
+  for (const [n, a] of Object.entries(f.a || {})) {
+    const mine = f.c.filter(c => c[5] === n && c[4] === 'p'); if (!mine.length || !a) continue;
+    let mx = 0, my = 0, mm = 0; for (const c of mine) { const w = c[3] * c[3]; mx += c[1] * w; my += c[2] * w; mm += w; } mx /= mm; my /= mm;
+    g.strokeStyle = colorOf(n); g.lineWidth = 2; g.setLineDash([8, 6]); g.beginPath(); g.moveTo(X(mx), Y(my)); g.lineTo(X(a[0]), Y(a[1])); g.stroke(); g.setLineDash([]);
+    g.beginPath(); g.arc(X(a[0]), Y(a[1]), 5, 0, Math.PI * 2); g.fillStyle = colorOf(n); g.fill();
+  }
+  // the trap plan (the team planner's): a target ring on the prey, each blocker's post, a line to it
+  if (f.tp) {
+    const P = f.c.find(c => c[0] === f.tp.prey);
+    if (P) {
+      const r = P[3] * sc + 10;
+      g.strokeStyle = '#ff5c5c'; g.lineWidth = 2; g.setLineDash([6, 4]); g.beginPath(); g.arc(X(P[1]), Y(P[2]), r, 0, Math.PI * 2); g.stroke(); g.setLineDash([]);
+      for (const k of [0, 1, 2, 3]) { const a = k * Math.PI / 2; g.beginPath(); g.moveTo(X(P[1]) + Math.cos(a) * (r - 6), Y(P[2]) + Math.sin(a) * (r - 6)); g.lineTo(X(P[1]) + Math.cos(a) * (r + 10), Y(P[2]) + Math.sin(a) * (r + 10)); g.stroke(); }
+      g.fillStyle = '#ff9c9c'; g.font = '13px system-ui'; g.textAlign = 'center'; g.textBaseline = 'bottom';
+      g.fillText('trap' + (f.tp.eta ? ': caught in ~' + f.tp.eta + ' s' : '') + (f.tp.pending ? ' (posts not taken yet)' : ''), X(P[1]), Y(P[2]) - r - 12);
+    }
+    for (const [n, R] of Object.entries(f.tp.roles || {})) {
+      if (R.kind !== 'post') continue;
+      const mine = f.c.filter(c => c[5] === n && c[4] === 'p'); if (!mine.length) continue;
+      const big = mine.reduce((a, c) => (c[3] > a[3] ? c : a));
+      g.strokeStyle = colorOf(n); g.lineWidth = 2; g.setLineDash([2, 5]); g.beginPath(); g.moveTo(X(big[1]), Y(big[2])); g.lineTo(X(R.x), Y(R.y)); g.stroke(); g.setLineDash([]);
+      g.beginPath(); g.arc(X(R.x), Y(R.y), Math.max(8, big[3] * sc * 0.5), 0, Math.PI * 2); g.lineWidth = 3; g.stroke();
+      g.fillStyle = colorOf(n); g.font = '12px system-ui'; g.textAlign = 'center'; g.textBaseline = 'top';
+      g.fillText(n + "'s post (" + (R.why || '') + ')', X(R.x), Y(R.y) + Math.max(10, big[3] * sc * 0.5) + 4);
+    }
+  }
+  // HUD + side panel
+  const mass = n => Math.round(f.c.filter(c => c[5] === n && c[4] === 'p').reduce((a, c) => a + c[3] * c[3] / 100, 0));
+  const pieces = n => f.c.filter(c => c[5] === n && c[4] === 'p').length;
+  $('hud').textContent = `${(f.t / 25).toFixed(1)} s · ` + botsOf().map(n => `${n} ${mass(n)} (${pieces(n)} pc)`).join(' · ') + (V.run.real ? ' · real server' : ' · old sim');
+  $('tt').textContent = `${(f.t / 25).toFixed(1)} / ${(fr[fr.length - 1].t / 25).toFixed(1)} s`;
+  const doing = $('doing'); doing.className = ''; doing.innerHTML = '';
+  for (const n of botsOf()) {
+    if (!(n in (f.m || {}))) continue;
+    const d = document.createElement('div'); d.className = 'who';
+    const rel = f.r && f.r[n] ? ` · DNA turn ${f.r[n].round}, ${f.r[n].stepper} steps${f.r[n].stage ? ' (' + f.r[n].stage + ')' : ''}` : '';
+    d.innerHTML = `<i style="background:${colorOf(n)}"></i><span class="n"></span><span class="m"></span>`;
+    d.querySelector('.n').textContent = n; d.querySelector('.m').textContent = (f.m[n] || '—') + rel;
+    doing.appendChild(d);
+  }
+  for (const el of document.querySelectorAll('.ev')) el.classList.toggle('now', Math.abs(+el.dataset.t - f.t) <= 6);
+}
+
+// ---------------------------------------------------------------- playback
+function loop(ts) {
+  if (V.playing && V.run) {
+    const dt = V.lastT ? ts - V.lastT : 0; V.acc += dt * V.speed;
+    while (V.acc >= 40) { V.acc -= 40; if (V.frame < V.run.data.frames.length - 1) V.frame++; else { V.playing = false; $('play').textContent = 'Play'; break; } }
+    $('scrub').value = String(V.frame); draw();
+  }
+  V.lastT = ts; requestAnimationFrame(loop);
+}
+$('play').onclick = () => { if (!V.run) return; if (V.frame >= V.run.data.frames.length - 1) V.frame = 0; V.playing = !V.playing; $('play').textContent = V.playing ? 'Pause' : 'Play'; };
+$('speed').onchange = e => { V.speed = +e.target.value; };
+$('scrub').oninput = e => { V.frame = +e.target.value; V.playing = false; $('play').textContent = 'Play'; draw(); };
+$('fit').onchange = () => { V.cam = null; draw(); };
+// mouse wheel: zoom out / in; double-click: back to normal
+$('cv').addEventListener('wheel', e => { e.preventDefault(); V.zoom = Math.max(0.25, Math.min(12, (V.zoom || 1) * (e.deltaY > 0 ? 1.15 : 1 / 1.15))); draw(); }, { passive: false });
+$('cv').addEventListener('dblclick', () => { V.zoom = 1; draw(); });
+$('scene').onchange = showDesc;
+$('go').onclick = go;
+
+prism.ready(async () => {
+  await loadInfo();
+  const r = await prism.call('last', {}); if (r) show(r); else draw();
+  prism.on('status', d => setStatus(d.running));
+  prism.on('run', async () => { const r = await prism.call('last', {}); if (r) { await loadInfo(); $('scene').value = r.scene; $('version').value = r.version; showDesc(); show(r); } });
+  requestAnimationFrame(loop);
+});
+</script>
+</body>
+</html>

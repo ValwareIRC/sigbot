@@ -1,0 +1,23 @@
+# local tooling
+/.claude/
+/.playwright-mcp/
+
+# Prism: only the Sigmally gadgets are part of the project
+/.prism/*
+!/.prism/gadgets/
+/.prism/gadgets/*
+!/.prism/gadgets/sigmally-lab/
+!/.prism/gadgets/arena-viewer/
+!/.prism/gadgets/tab-status/
+!/.prism/gadgets/friends-foes/
+!/.prism/gadgets/sim-viewer/
+
+node_modules/
+
+# the server code the sims run on is its own project: clone it here (see README)
+/sig-server/
+
+# old copies of the userscripts from before the repo layout (the current ones are in userscript/)
+/*.user.js
+
+*.log
