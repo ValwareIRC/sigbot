@@ -1,0 +1,7 @@
+{
+  "id": "say-it",
+  "name": "Say it",
+  "description": "Type something and the computer says it out loud (Windows voices), with voice, speed and volume, recent lines to replay, and a WAV copy.",
+  "backend": "backend.mjs",
+  "permissions": { "shell": true }
+}

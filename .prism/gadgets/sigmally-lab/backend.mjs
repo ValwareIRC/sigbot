@@ -5,12 +5,30 @@
 // - Arena: the real Sigmally server code (sig-server) on 127.0.0.1:47900 with server bots and headless
 //   Mega Bots running the real userscript; can compare settings over timed runs.
 import http from 'node:http';
+import net from 'node:net';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
 
 const PORT = 47800, ARENA_PORT = 47900;
+// 2026-11-12: nudge - backend bounce also refreshes a stuck panel (prism.ready hang class); v2
 let api, server, wss, renderMod, timers = [];
+// Optional add-ons that are not part of the repo: local/index.mjs in this folder (git ignores local/). An add-on may
+// answer extra http paths (http) and socket paths (socket), take message types it names (types + message), tag its own
+// clients at hello (hello) and offer panel handlers (handlers). Without one nothing here changes.
+let local = null;
+async function loadLocal() {
+    const f = path.join(api.dir, 'local', 'index.mjs');
+    if (!fs.existsSync(f)) return;
+    try {
+        local = (await import(pathToFileURL(f).href)).default;
+        await local.start({ api, clients, now, paths, emitClients, onMessage, PORT,
+            newId: () => nextId++,
+            drop: c => { clients.delete(c.id); if (focus === c.id) focus = pickFocus(); emitClients(); } });
+        api.log('local add-on loaded');
+    } catch (e) { local = null; api.log('local add-on failed to load: ' + e.message); }
+}
 const clients = new Map();          // id -> live connection
 const needPings = new Map();       // "needs you" problem -> { first, last } (one phone ping per problem)
 let nextId = 1, focus = null;
@@ -236,9 +254,11 @@ function onMessage(c, raw) {
         c.label = lab ? lab[1] : '';
         c.name = lab ? nm.slice(0, lab.index).trim() : nm;
         if (c.kind === 'browser' && /prism|electron/i.test((m.ua || '') + ' ' + (m.page || ''))) c.name = 'Prism browser';
+        if (local && local.hello) local.hello(c, m);   // an add-on may tag its own clients
         c.cfg = m.cfg;
         c.version = m.version || '';
         c.ua = m.ua || c.ua || '';
+        if (c.kind === 'browser') api.log('tab joined: #' + c.id + ' ' + browserName(c.ua) + ' ' + (m.version || '?'));
         if (m.cfg && m.cfg.multibox) c.squad = m.cfg.squad;
         const cur = clients.get(focus);
         if (!cur || (c.kind === 'browser' && cur.kind === 'arena')) focus = c.id;
@@ -272,7 +292,7 @@ function onMessage(c, raw) {
         // reconnects) stay quiet; only after it has gone quiet for 10 minutes does a new occurrence ping again
         if (need) {
             const p = needPings.get(need);
-            if (!p || now() - p.last > 10 * 60000) { needPings.set(need, { first: now(), last: now() }); api.ui.notify?.('Mega Bot needs you', `${c.name}: ${need}`); }
+            if (!p || now() - p.last > 10 * 60000) { needPings.set(need, { first: now(), last: now() }); api.log(`${c.name}: ${need}`); } // log only: phone pings flooded the user (2026-11-12)
             else p.last = now();
         }
     } else if (m.type === 'teamlog') {
@@ -294,7 +314,7 @@ function onMessage(c, raw) {
         api.log('leaderboard packet sample: ' + m.hex);
     } else if (m.type === 'lb') {
         // the game's leaderboard as one tab sees it: names top-down and our place (0 = not on it)
-        c.lb = { t: now(), names: m.names || [], pos: m.pos || 0, me: m.me || '' };
+        c.lb = { t: now(), names: m.names || [], pos: m.pos || 0, me: m.me || '', bot: m.bot, mass: m.mass || 0 };
         if (!c.lbSavedAt || now() - c.lbSavedAt > 30000 || m.pos) {
             c.lbSavedAt = now();
             try { fs.appendFileSync(path.join(api.dataDir, 'lb.jsonl'), JSON.stringify({ t: now(), who: c.name, label: c.label || '', ...c.lb }) + String.fromCharCode(10)); } catch (_) { }
@@ -309,11 +329,30 @@ function onMessage(c, raw) {
         c.deaths++;
         if (c.kind === 'arena' && arena.bots.has(c.name)) { const st = arena.stats.get(c.name); if (st) st.deaths++; }
         saveDeath(c, m.death);
+    } else if (m.type === 'wire') {
+        wireStore(c, m.entries || [], null);
+        if (m.dropped) wireStore(c, [{ t: now(), kind: 'dropped', count: m.dropped }], null);
+    } else if (m.type === 'captcha') {
+        const was = !!c.captcha;
+        c.captcha = m.on ? (c.captcha || now()) : 0;
+        if (m.on && !was) captchaAlert(c);
+        // solved, and you came here from your game: straight back to it
+        if (!m.on && was && c.returnTo) { const p = clients.get(c.returnTo); c.returnTo = 0; if (p) bringToFront(p).then(() => command(p, { cmd: 'notice', text: 'Captcha done - back to you', ms: 3000 })).catch(() => { }); }
+    } else if (m.type === 'front') {
+        const t = clients.get(+m.id);
+        if (t) { t.returnTo = c.id; bringToFront(t).catch(() => { }); }
     } else if (m.type === 'squad') {
         // multibox: pass a member's state on to the other members of its squad (other tabs / arena bots)
         c.squad = m.squad;
         for (const o of clients.values())
             if (o !== c && o.squad === m.squad && o.ws.readyState === 1) try { o.ws.send(raw); } catch (_) { }
+    } else if (m.type === 'beacon') {
+        // a page-gone beacon sent over the Lab link itself: same treatment as the HTTP route
+        const bb = m.b || {};
+        wireStore(null, [{ t: bb.t || now(), kind: 'beacon', what: String(bb.what || '').slice(0, 100), url: String(bb.page || '').slice(0, 120) }, ...(Array.isArray(bb.last) ? bb.last.slice(-20).map(e => ({ ...e, kind: 'before-' + e.kind })) : [])], { browser: browserName(String(bb.ua || '')) });
+        api.log('page going away: ' + browserName(String(bb.ua || '')) + ' ' + bb.what);
+    } else if (local && local.types && local.types.has(m.type)) {
+        local.message(c, m);
     } else if (m.type === 'reply') {
         const p = pending.get(m.id); if (p) { pending.delete(m.id); p(m); }
         if (m.cfg) c.cfg = m.cfg;
@@ -336,6 +375,84 @@ async function onHttp(req, res) {
         for (const c of clients.values()) if (c.kind === 'arena' && c.snap) out[c.name] = { mode: c.snap.mode || '', label: c.label || '', mass: c.snap.mass || 0, danger: c.snap.danger || 0 };
         res.setHeader('Content-Type', 'application/json');
         return res.end(JSON.stringify({ status: arena.status, compare: arena.compare ? { setting: arena.compare.setting, endsAt: arena.compare.endsAt } : null, bots: out }));
+    }
+    // the map gadget: every live game tab, what it sees right now (pellets left out), its view area and server
+    if (url.pathname === '/map') {
+        const browserOf = ua => ua.includes('Edg/') ? 'Edge' : ua.includes('OPR/') ? 'Opera' : ua.includes('Firefox/') ? 'Firefox' : ua.includes('Chrome/') ? 'Chrome' : 'Browser';
+        const tabs = [];
+        for (const c of clients.values()) {
+            const s = c.snap;
+            if (c.kind !== 'browser' || !s || now() - c.lastSeen > 4000) continue;
+            tabs.push({ id: c.id, browser: browserOf(c.ua || ''), nick: s.nick || '', bot: !!s.bot, mode: s.mode || '', mass: s.mass || 0, pieces: s.pieces || 0,
+                danger: s.danger || 0, t: s.t, server: s.server || '', view: s.view || null, border: s.border || null, center: s.center || null,
+                cells: (s.cells || []).filter(r => r[4] !== 7) });
+        }
+        const waiting = [];
+        for (const c of clients.values()) {
+            if (c.kind !== 'browser' || tabs.some(t => t.id === c.id) || c.ws.readyState !== 1) continue;
+            waiting.push({ id: c.id, browser: browserOf(c.ua || ''), want: c.wantServer || '', since: c.wantAt || 0 });
+        }
+        res.setHeader('Content-Type', 'application/json');
+        return res.end(JSON.stringify({ t: Date.now(), tabs, waiting }));
+    }
+    if (url.pathname === '/beacon' && req.method === 'POST') {
+        let body = ''; for await (const chunk of req) { body += chunk; if (body.length > 200000) break; }
+        let b = null; try { b = JSON.parse(body); } catch (_) { }
+        if (b) {
+            const br = browserName(String(b.ua || ''));
+            wireStore(null, [{ t: b.t || now(), kind: 'beacon', what: String(b.what || '').slice(0, 100), url: String(b.page || '').slice(0, 120) }, ...(Array.isArray(b.last) ? b.last.slice(-20).map(e => ({ ...e, kind: 'before-' + e.kind })) : [])], { browser: br });
+            api.log('page going away: ' + br + ' ' + b.what);
+        }
+        res.statusCode = 204; return res.end();
+    }
+    if (url.pathname === '/wire') {
+        if (req.headers.origin) { res.statusCode = 403; return res.end('local only'); }
+        res.setHeader('Content-Type', 'application/json');
+        const since = +url.searchParams.get('since') || 0;
+        return res.end(JSON.stringify({ ok: true, flags: wireMem.flags.filter(e => e.t > since).slice(-100), kinds: [...wireMem.kinds.entries()].sort((a, b) => b[1] - a[1]).slice(0, 60) }));
+    }
+    if (url.pathname === '/captcha' || url.pathname === '/front') {
+        if (req.headers.origin) { res.statusCode = 403; return res.end('local only'); }
+        res.setHeader('Content-Type', 'application/json');
+        if (url.pathname === '/front') {
+            const c = clients.get(+url.searchParams.get('id'));
+            return res.end(JSON.stringify(c ? await bringToFront(c) : { ok: false, error: 'no such tab' }));
+        }
+        const list = [...clients.values()].filter(c => c.kind === 'browser' && c.ws.readyState === 1 && c.captcha).map(c => ({ id: c.id, browser: browserName(c.ua || ''), since: c.captcha }));
+        return res.end(JSON.stringify({ ok: true, tabs: list }));
+    }
+    if (url.pathname.startsWith('/wiggle')) {
+        if (req.headers.origin) { res.statusCode = 403; return res.end('local only'); }
+        res.setHeader('Content-Type', 'application/json');
+        if (url.pathname === '/wiggle/set') { wiggle.auto = url.searchParams.get('auto') === '1'; await api.state.set('autoWiggle', wiggle.auto); }
+        if (url.pathname === '/wiggle/now') {
+            const c = clients.get(+url.searchParams.get('id'));
+            return res.end(JSON.stringify(c ? await wiggleTab(c, 'asked') : { ok: false, error: 'no such tab' }));
+        }
+        return res.end(JSON.stringify({ ok: true, auto: wiggle.auto, busy: wiggle.busy, waiting: waitingTabs().map(c => c.id), log: wiggle.log.slice(-15) }));
+    }
+    if (local && local.http && await local.http(url, req, res)) return;   // paths an add-on answers
+    if (url.pathname === '/servers' || url.pathname === '/switch') {
+        if (req.headers.origin) { res.statusCode = 403; return res.end('local only'); }
+        res.setHeader('Content-Type', 'application/json');
+        const tabs = [...clients.values()].filter(c => c.kind === 'browser' && c.ws.readyState === 1);
+        if (url.pathname === '/servers') {
+            // ask one tab for the game's server list (with player counts) - the first that answers
+            for (const c of tabs) {
+                const r = await command(c, { cmd: 'servers' });
+                if (r && r.ok && r.servers && r.servers.length) return res.end(JSON.stringify({ ok: true, servers: r.servers }));
+            }
+            return res.end(JSON.stringify({ ok: false, error: 'no game tab could list the servers' }));
+        }
+        const target = url.searchParams.get('url') || '';
+        const ids = (url.searchParams.get('ids') || '').split(',').filter(Boolean).map(Number);
+        const pick = ids.length ? tabs.filter(c => ids.includes(c.id)) : tabs;
+        const results = await Promise.all(pick.map(async c => {
+            const r = await command(c, { cmd: 'server', url: target });
+            if (r && r.ok) { c.wantServer = target; c.wantAt = now(); }
+            return { id: c.id, ok: !!(r && r.ok), error: r && r.error, closed: r && r.closed };
+        }));
+        return res.end(JSON.stringify({ ok: true, results }));
     }
     if (url.pathname === '/inject.js') {
         res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
@@ -365,12 +482,14 @@ async function onHttp(req, res) {
         try { latest = (/const VERSION = '([^']+)'/.exec(fs.readFileSync(paths().userscript, 'utf8')) || [])[1] || ''; } catch (_) { }
         const tabs = await Promise.all([...clients.values()].map(async c => {
             const t0 = now();
-            const r = await command(c, { cmd: 'eval', code: `return JSON.stringify({ v: window.megaBot && window.megaBot.version, ua: navigator.userAgent, hidden: document.hidden })` });
+            const r = await command(c, { cmd: 'eval', code: `let k = ''; try { k = sessionStorage.getItem('megaTabKey') || ''; if (!k) { k = Math.random().toString(36).slice(2, 10); sessionStorage.setItem('megaTabKey', k); } } catch (_) { } return JSON.stringify({ v: window.megaBot && window.megaBot.version, ua: navigator.userAgent, hidden: document.hidden, key: k })` });
             let info = {}; try { info = r.ok ? JSON.parse(r.result) : {}; } catch (_) { }
+            if (info.key) c.tabKey = info.key;
             return { id: c.id, name: c.name, kind: c.kind, hello: c.version || '', version: info.v || c.version || '', answers: !!r.ok, ms: now() - t0,
                 ua: info.ua || c.ua || '', hidden: !!info.hidden, mode: c.snap ? c.snap.mode : '', mass: c.snap ? c.snap.mass : 0, bot: c.snap ? c.snap.bot : null,
-                lastSeen: c.lastSeen, connectedAt: c.connectedAt };
+                lastSeen: c.lastSeen, connectedAt: c.connectedAt, key: info.key || c.tabKey || '' };
         }));
+        if (dedupeLinks()) { const ids = new Set(clients.keys()); return res.end(JSON.stringify({ latest, t: now(), tabs: tabs.filter(t => ids.has(t.id)) })); }
         return res.end(JSON.stringify({ latest, t: now(), tabs }));
     }
     // for the Friends & foes gadget (local processes only): the lists, names to pick from, and changing them
@@ -407,17 +526,149 @@ async function startBridge() {
     server = http.createServer((q, s) => onHttp(q, s).catch(e => { s.statusCode = 500; s.end(String(e)); }));
     // only Sigmally pages (any subdomain) and local processes without an Origin (arena bots)
     wss = new WebSocketServer({ server, verifyClient: ({ origin }) => !origin || origin === 'null' || /^https?:\/\/([a-z0-9-]+\.)*sigmally\.com$/i.test(origin) });
-    wss.on('connection', ws => {
+    wss.on('connection', (ws, req) => {
+        let ru = null;
+        try { ru = new URL(req.url, 'http://127.0.0.1'); } catch (_) { }
+        if (ru && local && local.socket && local.socket(ws, ru, require)) return;   // a socket path an add-on answers
         const c = { id: nextId++, ws, kind: 'browser', name: 'connecting…', label: '', connectedAt: now(), lastSeen: now(), snap: null, events: [], massHist: [], deaths: 0, peak: 0, cfg: null };
         clients.set(c.id, c);
         ws.on('message', d => onMessage(c, d.toString()));
-        ws.on('close', () => { clients.delete(c.id); if (focus === c.id) focus = pickFocus(); emitClients(); });
+        ws.on('close', () => { if (c.kind === 'browser' && c.ua) api.log('tab left: #' + c.id + ' ' + browserName(c.ua)); clients.delete(c.id); if (focus === c.id) focus = pickFocus(); emitClients(); });
         ws.on('error', () => { });
     });
     await new Promise((resolve) => {
         server.once('error', e => { api.log(`bridge could not listen on ${PORT}: ${e.message}`); resolve(); });
         server.listen(PORT, '127.0.0.1', () => { api.log(`bridge listening on ws://127.0.0.1:${PORT}`); resolve(); });
     });
+}
+
+
+// ------------------------------------------------------------------ auto-wiggle (the user, 2026-10-28)
+// The site joins a server only after a real mouse movement on the page. A tab connected to us but not in a game for a
+// while (e.g. after a server switch) gets one: we put a marker in its title, PowerShell finds that window, brings it up,
+// moves the real cursor over it, and puts the cursor and the focused window back. Skipped for the tab you're in.
+const wiggle = { auto: true, busy: false, last: new Map(), log: [], held: false, heldTab: 0 };
+const WIGGLE_PS = "param([string]$Marker, [switch]$DryRun, [switch]$Front)\nAdd-Type @\"\nusing System; using System.Text; using System.Runtime.InteropServices;\npublic static class SigWin {\n  public delegate bool EnumProc(IntPtr h, IntPtr l);\n  [DllImport(\"user32.dll\")] public static extern bool EnumWindows(EnumProc f, IntPtr l);\n  [DllImport(\"user32.dll\", CharSet=CharSet.Unicode)] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);\n  [DllImport(\"user32.dll\")] public static extern bool IsIconic(IntPtr h);\n  [DllImport(\"user32.dll\")] public static extern bool ShowWindow(IntPtr h, int c);\n  [DllImport(\"user32.dll\")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);\n  [DllImport(\"user32.dll\")] public static extern void SwitchToThisWindow(IntPtr h, bool alt);\n  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }\n  [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }\n  [DllImport(\"user32.dll\")] public static extern bool GetWindowRect(IntPtr h, out RECT r);\n  [DllImport(\"user32.dll\")] public static extern bool SetCursorPos(int x, int y);\n  [DllImport(\"user32.dll\")] public static extern bool GetCursorPos(out POINT p);\n  public static IntPtr Find(string m) {\n    IntPtr found = IntPtr.Zero;\n    EnumWindows((h, l) => { var sb = new StringBuilder(512); GetWindowText(h, sb, 512); if (sb.ToString().Contains(m)) { found = h; return false; } return true; }, IntPtr.Zero);\n    return found;\n  }\n  // on top of everything without taking focus (SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE|SWP_SHOWWINDOW), and back\n  public static void Raise(IntPtr h) { SetWindowPos(h, new IntPtr(-1), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010 | 0x0040); }\n  public static void Lower(IntPtr h) { SetWindowPos(h, new IntPtr(-2), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010); }\n}\n\"@\n$h = [SigWin]::Find($Marker)\nif ($h -eq [IntPtr]::Zero) { 'notfound'; exit }\nif ($DryRun) { 'found ' + [SigWin]::IsIconic($h); exit }\nif ($Front) { if ([SigWin]::IsIconic($h)) { [void][SigWin]::ShowWindow($h, 9) }; [SigWin]::SwitchToThisWindow($h, $true); 'ok'; exit }\n$p = New-Object SigWin+POINT; [void][SigWin]::GetCursorPos([ref]$p)\n$wasMin = [SigWin]::IsIconic($h)\nif ($wasMin) { [void][SigWin]::ShowWindow($h, 4) }   # SW_SHOWNOACTIVATE\n[SigWin]::Raise($h); Start-Sleep -Milliseconds 250\n$r = New-Object SigWin+RECT; [void][SigWin]::GetWindowRect($h, [ref]$r)\n$cx = [int](($r.L + $r.R) / 2); $cy = [int](($r.T + $r.B) / 2)\nfor ($i = 0; $i -lt 18; $i++) { $a = $i * 0.7; [void][SigWin]::SetCursorPos($cx + [int](80 * [Math]::Cos($a)), $cy + [int](80 * [Math]::Sin($a))); Start-Sleep -Milliseconds 30 }\nStart-Sleep -Milliseconds 300\n[void][SigWin]::SetCursorPos($p.X, $p.Y)\n[SigWin]::Lower($h)\nif ($wasMin) { [void][SigWin]::ShowWindow($h, 7) }   # SW_SHOWMINNOACTIVE\n'ok'\n";
+const wiggleScript = () => { const p = path.join(api.dataDir, 'wiggle.ps1'); try { if (!fs.existsSync(p) || fs.readFileSync(p, 'utf8') !== WIGGLE_PS) fs.writeFileSync(p, WIGGLE_PS); } catch (_) { } return p; };
+const wiggleLog = (id, text) => { wiggle.log.push({ t: now(), id, text }); if (wiggle.log.length > 40) wiggle.log.shift(); api.log('wiggle #' + id + ': ' + text); };
+function waitingTabs() {
+    return [...clients.values()].filter(c => c.kind === 'browser' && c.ws.readyState === 1 && !c.captcha && now() - c.connectedAt > 12000 && (!c.snap || now() - (c.snap.t || 0) > 8000));
+}
+async function wiggleTab(c, why) {
+    if (wiggle.busy) return { ok: false, error: 'another wiggle is running' };
+    if (process.platform !== 'win32') return { ok: false, error: 'only on Windows' };
+    wiggle.busy = true; wiggle.last.set(c.id, now()); c.wiggleTries = (c.wiggleTries || 0) + 1;
+    if (c.wiggleTries === 3) wiggleLog(c.id, 'still not joining after 2 wiggles - trying again every 10 minutes only');
+    const marker = 'SIGWIGGLE-' + c.id + '-' + Math.random().toString(36).slice(2, 7);
+    try {
+        // (the page's own title, back afterwards; the tab you have focus in is left to you)
+        const r = await command(c, { cmd: 'eval', code: 'if (document.hasFocus()) return "focused"; if (document.__megaTitle == null) document.__megaTitle = document.title; document.title = ' + JSON.stringify(marker) + '; return "marked";' });
+        if (!r || !r.ok) { wiggleLog(c.id, 'no answer from the tab'); return { ok: false, error: 'no answer from the tab' }; }
+        if (r.result === 'focused') { wiggleLog(c.id, 'skipped: you are in that tab'); return { ok: false, error: 'you are in that tab' }; }
+        await new Promise(res => setTimeout(res, 400));   // the browser updates the window title
+        const out = await api.shell('powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + wiggleScript() + '" -Marker "' + marker + '"', { timeoutMs: 15000 });
+        const res = String(out.stdout || '').trim().split(/\r?\n/).pop() || String(out.stderr || '').trim().slice(0, 200);
+        await command(c, { cmd: 'eval', code: 'if (document.__megaTitle != null) { document.title = document.__megaTitle; document.__megaTitle = null; } return "restored";' });
+        if (res === 'notfound') { wiggleLog(c.id, 'window not found (the tab has to be the front tab of its own window; it can be minimised)'); return { ok: false, error: 'window not found: the tab must be the front tab of its own window' }; }
+        wiggleLog(c.id, (res === 'ok' ? 'wiggled' : 'wiggle failed: ' + res) + (why ? ' (' + why + ')' : ''));
+        return { ok: res === 'ok', result: res };
+    } catch (e) { wiggleLog(c.id, 'wiggle failed: ' + e.message); return { ok: false, error: e.message }; }
+    finally { wiggle.busy = false; }
+}
+// (the user, 2026-10-28) only straight away when nobody's playing. If you're playing (a tab with the bot off, alive), it
+// tells you in your game, holds SigMod's auto-respawn, waits for your next death, wiggles, gives your window back, and
+// respawns you.
+// ---- wire watch (the user, 2026-10-29): everything the tabs saw on sockets that aren't the game itself, anything new
+// on the game socket, scripts closing/opening the page, and pages going away. All of it goes to wire.jsonl (kept to
+// ~50 MB); a message of a kind we haven't seen before is flagged.
+const wireMem = { ring: [], kinds: new Map(), flags: [] };
+const wireKind = e => e.kind + ' ' + (e.url || '').replace(/[?#].*$/, '') + ' ' + (e.text ? e.text.slice(0, 24).replace(/[0-9]+/g, '#') : e.hex ? e.hex.slice(0, 4) : e.op !== undefined ? 'op' + e.op : '');
+function wireStore(c, entries, extra) {
+    const file = path.join(api.dataDir, 'wire.jsonl');
+    try { if (fs.existsSync(file) && fs.statSync(file).size > 50e6) fs.renameSync(file, file + '.old'); } catch (_) { }
+    let lines = '';
+    // (login / captcha tokens in spawn packets are blanked before anything is kept)
+    const scrub = v => typeof v === 'string' ? v.replace(/("?(token|captcha|auth)"?s*:s*")[^"]{8,}/gi, '$1[blanked]') : v;
+    for (const e0 of entries) {
+        const e = { ...e0, text: scrub(e0.text), ascii: scrub(e0.ascii), hex: e0.hex && /token/i.test(e0.ascii || '') ? '[blanked]' : e0.hex };
+        const row = { ...e, tab: c ? c.id : null, browser: c ? browserName(c.ua || '') : (extra && extra.browser) || '' };
+        lines += JSON.stringify(row) + String.fromCharCode(10);
+        wireMem.ring.push(row); if (wireMem.ring.length > 3000) wireMem.ring.shift();
+        const k = wireKind(e), seen = wireMem.kinds.get(k);
+        wireMem.kinds.set(k, (seen || 0) + 1);
+        const loud = /^page-(close|open|assign|replace)$|^game-text|^beacon/.test(e.kind);
+        if (!seen || loud) { wireMem.flags.push({ ...row, first: !seen }); if (wireMem.flags.length > 300) wireMem.flags.shift(); }
+        if (loud) api.log('WIRE ' + row.browser + ' #' + row.tab + ': ' + e.kind + ' ' + JSON.stringify(e).slice(0, 300));
+    }
+    try { fs.appendFileSync(file, lines); } catch (_) { }
+}
+
+// ---- captchas (the user, 2026-10-28): we never click them; we tell you, properly, and take you there in one click
+const browserName = ua => ua.includes('Edg/') ? 'Edge' : ua.includes('OPR/') ? 'Opera' : ua.includes('Firefox/') ? 'Firefox' : ua.includes('Chrome/') ? 'Chrome' : 'Browser';
+async function bringToFront(c) {
+    if (process.platform !== 'win32') return { ok: false, error: 'only on Windows' };
+    const marker = 'SIGFRONT-' + c.id + '-' + Math.random().toString(36).slice(2, 7);
+    const r = await command(c, { cmd: 'eval', code: 'if (document.__megaTitle == null) document.__megaTitle = document.title; document.title = ' + JSON.stringify(marker) + '; return "marked";' });
+    if (!r || !r.ok) return { ok: false, error: 'no answer from the tab' };
+    await new Promise(res => setTimeout(res, 400));
+    const out = await api.shell('powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + wiggleScript() + '" -Marker "' + marker + '" -Front', { timeoutMs: 15000 });
+    await command(c, { cmd: 'eval', code: 'if (document.__megaTitle != null) { document.title = document.__megaTitle; document.__megaTitle = null; } return "restored";' });
+    const res = String(out.stdout || '').trim().split(/\r?\n/).pop();
+    if (res === 'notfound') return { ok: false, error: 'window not found: the tab must be the front tab of its own window' };
+    return { ok: res === 'ok', result: res };
+}
+function captchaAlert(c) {
+    const who = browserName(c.ua || '') + ' #' + c.id;
+    api.log('captcha in ' + who);
+    // no toast/notify and no in-game "Take me there" notice: tiles cycle captchas every respawn (2026-11-12)
+    // and those flooded the screen and phone. The Lab event log and the tile's CAPTCHA badge are enough.
+}
+
+function dedupeLinks() {
+    const byKey = new Map();
+    for (const c of clients.values()) if (c.kind === 'browser' && c.tabKey && c.ws.readyState === 1) (byKey.get(c.tabKey) || byKey.set(c.tabKey, []).get(c.tabKey)).push(c);
+    let closed = 0;
+    for (const list of byKey.values()) {
+        if (list.length < 2) continue;
+        const keep = list.slice().sort((a, b) => ((b.snap && b.snap.t) || 0) - ((a.snap && a.snap.t) || 0) || b.connectedAt - a.connectedAt)[0];
+        for (const c of list) if (c !== keep) { try { c.ws.close(4000, 'duplicate link'); } catch (_) { } clients.delete(c.id); closed++; }
+    }
+    if (closed) api.log('closed ' + closed + ' duplicate link(s) from the same tab');
+    return closed;
+}
+async function wiggleScan() {
+    dedupeLinks();
+    if (!wiggle.auto || wiggle.busy) return;
+    for (const c of clients.values()) if (c.snap && now() - (c.snap.t || 0) < 5000) c.wiggleTries = 0;   // it joined: start over
+    // clients that look after themselves (an add-on marks them quiet) are never wiggled
+    const due = waitingTabs().filter(c => !c.quiet).filter(c => now() - (wiggle.last.get(c.id) || 0) >= ((c.wiggleTries || 0) >= 2 ? 600000 : 30000));
+    const player = [...clients.values()].find(c => c.kind === 'browser' && c.ws.readyState === 1 && c.snap && c.snap.bot === false &&
+        now() - (c.snap.t || 0) < 5000 && !due.includes(c));
+    if (!due.length) {
+        if (wiggle.held) { const p = clients.get(wiggle.heldTab); if (p) await command(p, { cmd: 'hold', on: false }); wiggle.held = false; }
+        return;
+    }
+    if (!player) { await wiggleTab(due[0], 'not in a game'); return; }            // nobody playing: now
+    const n = due.length, tabs = n + ' tab' + (n > 1 ? 's' : '');
+    if ((player.snap.pieces || 0) > 0) {
+        if ((!wiggle.held || wiggle.heldTab !== player.id) && now() - (wiggle.noticeAt || 0) > 300000) {
+            wiggle.noticeAt = now();
+            wiggle.held = true; wiggle.heldTab = player.id;
+            await command(player, { cmd: 'hold', on: true });
+            await command(player, { cmd: 'notice', text: tabs + ' need' + (n > 1 ? '' : 's') + ' a wiggle - on your next death I\'ll switch over, wiggle, and bring you straight back', ms: 8000 });
+            wiggleLog(player.id, 'you are playing: waiting for your next death (' + tabs + ' to wiggle)');
+        }
+        return;
+    }
+    // you just died: wiggle them all, give your window back, respawn you
+    wiggle.held = true; wiggle.heldTab = player.id;
+    await command(player, { cmd: 'hold', on: true });
+    await command(player, { cmd: 'notice', text: 'Wiggling ' + tabs + ' - back in a second…', ms: 4000 });
+    for (const c of due) await wiggleTab(c, 'you died');
+    await command(player, { cmd: 'hold', on: false }); wiggle.held = false;
+    await command(player, { cmd: 'respawn' });
+    await command(player, { cmd: 'notice', text: 'Done - respawning you', ms: 2500 });
+    wiggleLog(player.id, 'wiggled ' + tabs + ' and respawned you');
 }
 
 // ------------------------------------------------------------------ pictures for tools
@@ -600,6 +851,37 @@ async function compare({ setting, values, botsPerValue = 3, minutes = 3, serverB
     return arena.compare;
 }
 
+// ------------------------------------------------------------------ the top-three clock (the user's goal, 2026-11-13)
+// Once a second: are three of our bot tabs in leaderboard places 1, 2 and 3 right now? Each tab reports its own place
+// (the game's leaderboard packet) whenever it changes. Seconds are kept for the last hour; a line a minute goes to
+// top3.jsonl so a run can be read back later.
+const top3 = { secs: [], min: { t: 0, all: 0, one: 0, n: 0 } };
+function top3Now() {
+    const t = now();
+    const bots = [...clients.values()].filter(c => c.kind === 'browser' && c.lb && t - c.lb.t < 8000 && c.lb.pos > 0 && c.lb.bot !== false && (!c.snap || c.snap.bot !== false));
+    const seen = new Set(), places = [];
+    for (const c of bots.sort((a, b) => a.lb.pos - b.lb.pos)) { if (seen.has(c.lb.pos)) continue; seen.add(c.lb.pos); places.push({ pos: c.lb.pos, mass: c.snap ? c.snap.mass : c.lb.mass, id: c.id, name: c.lb.me || c.myName || '' }); }
+    return { t, places, all: places.length >= 3 && places[0].pos === 1 && places[1].pos === 2 && places[2].pos === 3, one: !!places.length && places[0].pos === 1 };
+}
+function top3Tick() {
+    const s = top3Now();
+    top3.secs.push([s.t, s.all ? 1 : 0, s.one ? 1 : 0, s.places.length]);
+    while (top3.secs.length && s.t - top3.secs[0][0] > 3600e3) top3.secs.shift();
+    const m = top3.min; if (!m.t) m.t = s.t;
+    m.n++; if (s.all) m.all++; if (s.one) m.one++;
+    if (s.t - m.t >= 60000) {
+        if (s.places.length) try { fs.appendFileSync(path.join(api.dataDir, 'top3.jsonl'), JSON.stringify({ t: s.t, secs: m.n, all: m.all, one: m.one, places: s.places.map(p => [p.pos, Math.round(p.mass || 0), p.name]) }) + '\n'); } catch (_) { }
+        top3.min = { t: s.t, all: 0, one: 0, n: 0 };
+    }
+}
+function top3Text() {
+    const s = top3Now(), mmss = n => Math.floor(n / 60) + ':' + String(n % 60).padStart(2, '0');
+    let all = 0, one = 0, withBots = 0; for (const r of top3.secs) { all += r[1]; one += r[2]; if (r[3]) withBots++; }
+    const span = top3.secs.length ? Math.round((s.t - top3.secs[0][0]) / 60000) : 0;
+    return `Top-three clock, last ${Math.min(60, span)} min (${mmss(withBots)} with a bot on the board): all three of ours in places 1-3 for ${mmss(all)} | one of ours at #1 for ${mmss(one)}` +
+        ` | now: ${s.places.length ? s.places.map(p => `#${p.pos} ${Math.round(p.mass || 0)}`).join(', ') : 'no bot alive on the board'}`;
+}
+
 // ------------------------------------------------------------------ text views for tools
 function statusText() {
     const lines = [];
@@ -615,6 +897,7 @@ function statusText() {
         const best = lbs.reduce((a, c) => (c.lb.pos && (!a || c.lb.pos < a.lb.pos)) ? c : a, null);
         lines.push(`Leaderboard: ${best ? `our best place #${best.lb.pos} (#${best.id})` : 'none of us on it'}; top: ${lbs[0].lb.names.slice(0, 10).join(', ')}`);
     }
+    lines.push(top3Text());
     return lines.join('\n');
 }
 
@@ -628,15 +911,20 @@ export default {
         renderMod = holder.SigRender;
         loadDeaths();
         loadTeamlog();
+        await loadLocal();
         await startBridge();
         lists = cleanLists((await api.state.get('lists', null)) || {});
         const last = await api.state.get('lastCompare', null);
         if (last) arena.compare = last;
         timers.push(setInterval(emitClients, 1000));
+        timers.push(setInterval(() => { try { top3Tick(); } catch (_) { } }, 1000));
+        wiggle.auto = (await api.state.get('autoWiggle', true)) !== false;
+        timers.push(setInterval(() => { wiggleScan().catch(() => { }); }, 3000));
     },
     async stop() {
         for (const t of timers) { clearInterval(t); clearTimeout(t); }
         await stopArena();
+        try { if (local && local.stop) await local.stop(); } catch (_) { }
         for (const c of clients.values()) try { c.ws.close(); } catch (_) { }
         try { wss && wss.close(); } catch (_) { }
         try { server && server.close(); } catch (_) { }
@@ -673,6 +961,8 @@ export default {
         },
         async respawn({ target }) { const c = resolveTargets(target)[0]; return c ? command(c, { cmd: 'respawn' }) : { ok: false }; },
         async arenaStart(opts) { return startArena(opts || {}); },
+        // panel handlers offered by a local add-on (see loadLocal)
+        async local({ name, args } = {}) { const f = local && local.handlers && local.handlers[name]; return f ? f(args || {}) : { ok: false, error: 'not available here' }; },
         async arenaStop() { await stopArena(); return arenaState(); },
         async arenaState() { return arenaState(); },
         async compare(opts) { return compare(opts); },

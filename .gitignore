@@ -2,15 +2,11 @@
 /.claude/
 /.playwright-mcp/
 
-# Prism: only the Sigmally gadgets are part of the project
+# Prism: the gadgets are part of the project; the rest of .prism (notes, decisions) is not
 /.prism/*
 !/.prism/gadgets/
-/.prism/gadgets/*
-!/.prism/gadgets/sigmally-lab/
-!/.prism/gadgets/arena-viewer/
-!/.prism/gadgets/tab-status/
-!/.prism/gadgets/friends-foes/
-!/.prism/gadgets/sim-viewer/
+# a gadget's local/ folder holds add-ons that stay on this machine
+/.prism/gadgets/*/local/
 
 node_modules/
 
@@ -21,3 +17,14 @@ node_modules/
 /*.user.js
 
 *.log
+
+# one-off scripts from the swarm work of 2026-11-12: they stay on this machine
+/tools/patch-*.mjs
+/tools/cert-check*.mjs
+/tools/live-*.mjs
+/tools/headless-test.mjs
+/tools/peek-bots.mjs
+/tools/runner-live-check.mjs
+/tools/verify-pipe.mjs
+/tools/watch-one-bot.mjs
+/tools/ws-gate-test.mjs

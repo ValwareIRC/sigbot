@@ -1,0 +1,8 @@
+{
+  "id": "chat-brain",
+  "name": "Chat brain",
+  "description": "A local model (Ollama) reads the Sigmally chat and what just happened in the game, decides whether to answer, and (when live) says it through one of our tabs. Preview mode shows what it would say.",
+  "backend": "backend.mjs",
+  "permissions": { "network": true },
+  "widget": { "title": "Chat brain", "handler": "widget", "refreshSeconds": 60 }
+}

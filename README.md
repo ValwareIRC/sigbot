@@ -67,17 +67,45 @@ Settings can also be changed from the browser console: `megaBot.set('mineMinMass
 
 ## The Lab (Prism gadgets)
 
-`.prism/gadgets/` holds panels for the Prism IDE:
+`.prism/gadgets/` holds panels for the Prism IDE.
+
+**To see them in Prism, open this repo's own folder** (the one that contains `.prism`), not its parent and not a
+folder inside it. Prism looks for project gadgets in `<the folder you opened>/.prism/gadgets/` and nowhere else; a ZIP
+download often unpacks one level too deep. If they still don't show or don't start:
+
+```sh
+node tools/check-gadgets.mjs      # says which folder to open and what is missing; changes nothing
+```
+
+The Lab needs two packages. Prism installs them the first time the Lab opens (Node.js with npm must be installed);
+by hand: `cd .prism/gadgets/sigmally-lab && npm install`. Install the bot file from this same copy
+(`userscript/sigmally-mega-bot.user.js`) so the game tab and the Lab match.
+
+The game and the bots:
 
 - **Sigmally Lab**: the bridge every bot tab connects to (ws://127.0.0.1:47800). Live view of each bot, death
   replays, live settings, hot-swapping a new userscript into running tabs, and a local **arena** that runs the real
   server code with server bots, headless Mega Bots and aggressive hunter bots.
-- **Arena viewer**: watch the arena live.
-- **Tab status**: which tabs run which version.
+- **Tab status**: which tabs run which version, and whether each answers.
 - **Friends & foes**: shared friend / enemy / VIP lists.
-- **Sim viewer**: run a test scene and play it back.
+- **Sigmally map**: the whole map at once for every game tab.
+- **How we die**: what kills the bots, from the deaths the Lab records.
+- **Relay watch**: counts the pair's DNA relays live.
+- **Loop Watch**: bots in the game over the last 12 hours, with an alert when two or fewer are left.
 
-Set up once: `cd .prism/gadgets/sigmally-lab && npm install`.
+Testing:
+
+- **Arena viewer**: watch the arena live.
+- **Sim viewer**: run a test scene and play it back.
+- **Sim batch**, **Deploy desk**, **Team study runs**, **DNA scratchpad**: comparing versions over many seeds, swapping
+  a new bot file into the tabs, team-study results, sketching a split-run. Sim batch, Deploy desk and Team study
+  read working files that live outside this repo (`%LOCALAPPDATA%\sighack_test`, `sighack_live`); without them they
+  open and say what is missing.
+
+General helpers that came along: **Chat brain** (a local Ollama model reads the game chat), **Say it** (Windows
+text to speech), **Timer Schedule**.
+
+A gadget may have a `local/` folder for add-ons that stay on one machine; git ignores it.
 
 ## Simulator
 

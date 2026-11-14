@@ -1,0 +1,8 @@
+{
+  "id": "dna-pad",
+  "name": "DNA scratchpad",
+  "description": "Demonstrate how the DNA split-run should go: place two teammates, add splits and aims on a timeline, and watch it play out with the game's rules (split boost, 1.14 eat line, 60 s merge). Save demos for Claude to copy.",
+  "backend": "backend.mjs",
+  "agent": "The user demonstrates DNA relays here. dna_demos returns each saved demo as a step-by-step recipe (times, who splits, aim angles relative to the travel direction and to the partner) plus what happened (who ate which piece, how far the pair got) and the user's notes - implement the bot's relay to match.",
+  "permissions": {}
+}

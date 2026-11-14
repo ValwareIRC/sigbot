@@ -1,0 +1,9 @@
+{
+  "id": "sim-batch",
+  "name": "Sim batch",
+  "description": "Run the fast team sims over many seeds – two userscript versions side by side on the same seeds – and compare alive/team mass/travel/deaths/jitter per scene. What the deploy checklist runs before swapping tabs.",
+  "backend": "backend.mjs",
+  "agent": "Use before deploying: simbatch_run with the smoke scenes (escape, rally, mines, boostkill, calm) A=live file B=workspace userscript on the same seeds, then simbatch_last for the verdict.",
+  "permissions": { "shell": true, "workspace": "read" },
+  "widget": { "title": "Sim batch", "handler": "widget", "refreshSeconds": 60 }
+}

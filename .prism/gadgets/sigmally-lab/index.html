@@ -43,6 +43,7 @@
   .muted { opacity: .65; font-size: 13px }
   .caption { font-size: 13px; margin: 6px 0; min-height: 1.2em }
   .tablewrap { overflow: auto }
+  /* 2026-11-12: panel-refresh nudge */
 </style>
 </head>
 <body>
@@ -59,17 +60,32 @@
 </div>
 <script src="render.js"></script>
 <script>
-const { renderSnapshot, describeSnapshot, ROLE_COLORS, ROLE_NAMES } = window.SigRender;
-const { h, mount, ago } = window.kit;
+// Self-healing boot: when the panel refreshes while the backend is restarting (e.g. after an edit), render.js can
+// fail to load - the boot then threw on the first line and the panel stayed blank until the gadget was stopped
+// and started again. Retry loading it instead, and never run the program twice.
+window.__labBoot = function () {
+  if (!window.SigRender || !window.kit) {
+    const s = document.createElement('script');
+    s.src = 'render.js?r=' + Date.now();
+    s.onload = () => setTimeout(window.__labBoot, 0);
+    s.onerror = () => setTimeout(window.__labBoot, 800);
+    document.head.appendChild(s);
+    return;
+  }
+  if (window.__labBooted) return;
+  window.__labBooted = true;
+  const { renderSnapshot, describeSnapshot, ROLE_COLORS, ROLE_NAMES } = window.SigRender;
+  const { h, mount, ago } = window.kit;
 const S = { tab: 'live', clients: [], focus: null, snap: null, events: [], massHist: [], deaths: [], arena: null, cfg: null,
   replay: null, replayFrame: 0, replayFile: null, playing: null, deathFilter: 'browser', cfgFilter: '' };
 
 const TABS = [['live', 'Live'], ['team', 'Team'], ['deaths', 'Deaths'], ['arena', 'Arena'], ['settings', 'Settings']];
+let EXTRA = null;   // tabs brought by a local add-on (local/ui.js), when this copy has one
 function drawTabs() {
   const el = document.getElementById('tabs');
   el.innerHTML = '';
   for (const [id, label] of TABS) {
-    const b = h('div', { class: 'k-tab' + (S.tab === id ? ' on' : ''), onclick: () => { S.tab = id; drawTabs(); draw(); if (id === 'settings') loadCfg(); if (id === 'team') loadTeam(); } }, label);
+    const b = h('div', { class: 'k-tab' + (S.tab === id ? ' on' : ''), onclick: () => { S.tab = id; drawTabs(); draw(); if (id === 'settings') loadCfg(); if (id === 'team') loadTeam(); if (EXTRA && EXTRA.onTab[id]) EXTRA.onTab[id](); } }, label);
     el.appendChild(b);
   }
 }
@@ -281,10 +297,11 @@ function settingsView() {
 function draw() {
   drawTop();
   const body = document.getElementById('body');
-  const view = S.tab === 'live' ? liveView() : S.tab === 'team' ? teamView() : S.tab === 'deaths' ? deathsView() : S.tab === 'arena' ? arenaView() : settingsView();
-  // keep focus and typing intact on the arena/settings forms: only redraw them when nothing is being edited
+  const view = S.tab === 'live' ? liveView() : S.tab === 'team' ? teamView() : S.tab === 'deaths' ? deathsView() : S.tab === 'arena' ? arenaView() : EXTRA && EXTRA.views[S.tab] ? EXTRA.views[S.tab]() : settingsView();
+  // keep focus and typing intact on the forms: only redraw a tab when nothing is being edited
+  // (a tab that refreshes itself every 2 s wiped half-typed fields without this guard - 2026-11-12)
   const active = document.activeElement;
-  if ((S.tab === 'arena' || S.tab === 'settings') && active && active.tagName === 'INPUT' && body.contains(active) && active.id !== 'cfgf') return;
+  if (['arena', 'settings'].concat(EXTRA ? EXTRA.forms : []).includes(S.tab) && active && ['INPUT', 'SELECT', 'TEXTAREA'].includes(active.tagName) && body.contains(active) && active.id !== 'cfgf') return;
   body.innerHTML = '';
   mount(body, ...view);
 }
@@ -313,7 +330,16 @@ prism.ready(async () => {
   prism.on('death', d => { S.deaths.unshift(d); if (S.tab === 'deaths') soon(); });
   prism.on('teamlog', () => { if (S.tab === 'team') { clearTimeout(S.teamT); S.teamT = setTimeout(loadTeam, 800); } });
   prism.on('arena', a => { S.arena = a; if (S.tab === 'arena') soon(); });
+  // a local add-on may bring its own tabs (the backend says whether this copy has one)
+  prism.call('local', { name: 'ui' }).then(r => {
+    if (!r || !r.ok || !r.script) return;
+    const el = document.createElement('script'); el.src = r.script;
+    el.onload = () => { if (!window.LabLocal || EXTRA) return; EXTRA = window.LabLocal({ h, S, draw, val, table, prism }); TABS.splice(TABS.length - 1, 0, ...EXTRA.tabs); drawTabs(); if (EXTRA.boot) EXTRA.boot(); };
+    document.head.appendChild(el);
+  }).catch(() => { });
 });
+};
+window.__labBoot();
 </script>
 </body>
 </html>

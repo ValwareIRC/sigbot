@@ -1,0 +1,136 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="prism-gadget://_sdk/base.css">
+<link rel="stylesheet" href="prism-gadget://_sdk/kit.css">
+<script src="prism-gadget://_sdk/prism.js"></script>
+<script src="prism-gadget://_sdk/kit.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box }
+html, body { height: 100%; margin: 0 }
+.krow { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; min-width: 0 }
+.field { display: flex; flex-direction: column; gap: 2px; min-width: 60px }
+.field label { font-size: 11px; color: var(--text3, #8b93a7) }
+select, input { background: rgba(255,255,255,.06); color: inherit; border: 1px solid rgba(255,255,255,.16); border-radius: 6px; padding: 4px 6px; font: inherit; min-width: 0 }
+.chips { display: flex; flex-wrap: wrap; gap: 6px }
+.chip { padding: 2px 10px; border-radius: 999px; border: 1px solid rgba(255,255,255,.18); background: rgba(255,255,255,.04); cursor: pointer; font-size: 12px }
+.chip.on { background: var(--accent); border-color: var(--accent); color: var(--onAccent, #fff) }
+.scroll { overflow-x: auto }
+table { border-collapse: collapse; width: 100%; font-size: 12px }
+th, td { text-align: right; padding: 3px 6px; white-space: nowrap; font-weight: 400 }
+th:first-child, td:first-child { text-align: left }
+th { color: var(--text3, #8b93a7); border-bottom: 1px solid rgba(255,255,255,.12) }
+.dim { color: var(--text3, #8b93a7) }
+.note { font-size: 12px; margin-top: 8px }
+</style></head>
+<body>
+<div class="k-app">
+  <div class="k-top">
+    <div class="k-title">Sim batch</div>
+    <div class="k-grow dim" id="sub"></div>
+    <button id="stop">Stop</button>
+    <button id="go" class="primary">Run</button>
+  </div>
+  <div class="k-body" id="body"><div class="k-empty">Loading scenes…</div></div>
+</div>
+<script>
+const { h, mount, ago, toast } = window.kit;
+const body = document.getElementById('body'), sub = document.getElementById('sub');
+const SMOKE = ['escape', 'rally', 'mines', 'boostkill', 'calm'];
+let st = null, picked = new Set(), prog = null, last = null;
+
+function inputs() {
+  return {
+    a: document.getElementById('a').value,
+    b: document.getElementById('b').value,
+    seeds: +document.getElementById('seeds').value || 8,
+    secs: +document.getElementById('secs').value || 16,
+    parallel: +document.getElementById('par').value || 4,
+  };
+}
+function render() {
+  if (!st) return;
+  if (!st.sig) { sub.textContent = ''; return mount(body, h('div', { class: 'k-empty' }, 'sig-server checkout not found (SIG_SERVER, or sig-server/ next to the repo). The sims run on the real server code - clone 8y8x/sig-server first.')); }
+  const opts = sel => st.scripts.map(s => h('option', { value: s.key, selected: sel === s.key }, `${s.label}${s.version ? ' ' + s.version : ''}`));
+  const running = prog && prog.status === 'running';
+  sub.textContent = running ? `${prog.done}/${prog.total} runs` : (last ? `last batch ${ago(last.t)}` : '');
+  const resultCard = running
+    ? h('div', { class: 'k-card', style: 'margin-top:10px' },
+        h('div', { class: 'krow' }, h('div', { class: 'k-grow line' }, `${prog.done}/${prog.total} · ${prog.last || ''}`), h('span', { class: 'dim mono' }, `${prog.running} running`)),
+        h('div', { class: 'k-bar', style: 'margin-top:6px' }, h('i', { style: `width:${100 * prog.done / Math.max(1, prog.total)}%` })))
+    : (last && last.results ? h('div', { class: 'k-card', style: 'margin-top:10px' }, resultsTable(last)) : null);
+  mount(body,
+    h('div', { class: 'k-card' },
+      h('div', { class: 'krow' },
+        h('div', { class: 'field', style: 'flex:2;min-width:130px' }, h('label', null, 'A (reference)'), h('select', { id: 'a' }, opts('live'))),
+        h('div', { class: 'field', style: 'flex:2;min-width:130px' }, h('label', null, 'B (challenger)'), h('select', { id: 'b' }, h('option', { value: '' }, '— none —'), opts('workspace'))),
+        h('div', { class: 'field' }, h('label', null, 'seeds'), h('input', { id: 'seeds', type: 'number', value: '8', min: '1', max: '64' })),
+        h('div', { class: 'field' }, h('label', null, 'seconds'), h('input', { id: 'secs', type: 'number', value: '16', min: '2', max: '180' })),
+        h('div', { class: 'field' }, h('label', null, 'parallel'), h('input', { id: 'par', type: 'number', value: '4', min: '1', max: '16' }))),
+      h('div', { class: 'krow', style: 'margin-top:8px' },
+        h('button', { onclick: () => { SMOKE.forEach(s => { if (st.scenes.some(x => x.name === s)) picked.add(s); }); chips(); } }, 'Smoke set'),
+        h('button', { onclick: () => { st.scenes.forEach(s => picked.add(s.name)); chips(); } }, 'All'),
+        h('button', { onclick: () => { picked.clear(); chips(); } }, 'None')),
+      h('div', { class: 'chips', id: 'chips', style: 'margin-top:8px' }, ...st.scenes.map(s => h('span', {
+        class: 'chip' + (picked.has(s.name) ? ' on' : ''), title: s.desc, onclick: e => {
+          picked.has(s.name) ? picked.delete(s.name) : picked.add(s.name); e.target.classList.toggle('on');
+        } }, s.name)))),
+    ...(resultCard ? [resultCard] : []),
+    h('div', { class: 'dim note' }, 'The sims swing 20%+ between runs — only compare A and B within one batch (same seeds). “Δ team” is the paired median over the same seeds.'));
+  const el = document.getElementById('go'); el.disabled = running; el.textContent = running ? 'Running…' : 'Run';
+  document.getElementById('stop').disabled = !running;
+}
+function resultsTable(L) {
+  const hasB = L.results.some(r => r.B);
+  const head = ['scene', 'alive A', 'team A', 'travel A'].concat(hasB ? ['alive B', 'team B', 'travel B'] : []).concat(['deaths A' + (hasB ? '/B' : ''), 'Δ team', 'verdict']);
+  const rows = L.results.map(r => {
+    const d = r.pair && r.pair.dTeamMed != null ? r.pair.dTeamMed : null;
+    const small = r.A ? Math.max(1, Math.abs(r.A.team) * 0.01) : 1;
+    const verdict = !r.pair ? (r.A && r.A.errors ? 'errors' : '—') : d == null ? '—'
+      : Math.abs(d) < small ? h('span', { class: 'k-pill' }, 'same')
+      : d > 0 ? h('span', { class: 'k-pill ok' }, 'B better') : h('span', { class: 'k-pill bad' }, 'B worse');
+    const cells = [r.scene,
+      r.A ? `${r.A.allAlive}/${r.A.n}` : '-', r.A ? r.A.team : '-', r.A ? r.A.travel + '×' : '-'].
+      concat(hasB ? [r.B ? `${r.B.allAlive}/${r.B.n}` : '-', r.B ? r.B.team : '-', r.B ? r.B.travel + '×' : '-'] : []).
+      concat([r.A ? String(r.A.deaths) + (r.B ? '/' + r.B.deaths : '') : '-',
+        d == null ? '—' : (d > 0 ? '+' : '') + Math.round(d), verdict]);
+    return h('tr', { title: detail(r) }, ...cells.map((c, i) => h('td', { class: i === 0 ? '' : 'mono' }, c)));
+  });
+  return h('div', null,
+    h('div', { class: 'line dim', style: 'margin-bottom:6px' }, `${new Date(L.t).toLocaleString()} · A ${L.params.a}${L.params.b ? ' vs B ' + L.params.b : ''} · ${L.params.seeds} seeds × ${L.params.secs} s`),
+    h('div', { class: 'scroll' }, h('table', null, h('tr', null, ...head.map(x => h('th', null, x))), ...rows)));
+}
+function detail(r) {
+  const f = x => x ? `alive ${x.allAlive}/${x.n}, team ${x.team}, travel ${x.travel}x, deaths ${x.deaths}, handoffs ${x.handoffs}, splits ${x.splits}, jitter ${x.jitter}s, frozen ${x.frozen}s${x.errors ? ', ERRORS ' + x.errors : ''}` : '-';
+  return `A: ${f(r.A)}\nB: ${f(r.B)}`;
+}
+function chips() { /* chip classes updated in place after Smoke set / All / None */
+  for (const c of document.querySelectorAll('.chip')) c.classList.toggle('on', picked.has(c.textContent));
+}
+async function runBatch() {
+  const args = { ...inputs(), scenes: [...picked] };
+  if (!args.scenes.length) return toast('pick at least one scene');
+  const r = await prism.call('run', args);
+  if (!r.ok) return toast(r.error || 'failed to start');
+  prog = { status: 'running', done: 0, total: r.total, running: 0, last: '' };
+  render();
+}
+document.getElementById('go').onclick = runBatch;
+document.getElementById('stop').onclick = async () => { await prism.call('stop'); };
+prism.on('batch', p => {
+  prog = p;
+  if (p.status !== 'running' && p.results) last = { t: Date.now(), params: p.params, results: p.results };
+  render();
+});
+prism.ready(async () => {
+  try {
+    st = await prism.call('state');
+    prog = st.running && st.running.status === 'running' ? st.running : null;
+    last = st.last;
+    for (const s of SMOKE) if (st.scenes.some(x => x.name === s)) picked.add(s);
+    render();
+  } catch (e) {
+    mount(body, h('div', { class: 'k-empty' }, 'Could not load: ' + (e && e.message ? e.message : e)));
+  }
+});
+</script>
+</body></html>

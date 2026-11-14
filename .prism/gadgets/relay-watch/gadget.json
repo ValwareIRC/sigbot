@@ -1,0 +1,17 @@
+{
+  "id": "relay-watch",
+  "name": "Relay watch",
+  "description": "Counts the Mega Bot pair's DNA relays live: how many start, why they don't, how they end and how much mass they swap.",
+  "backend": "backend.mjs",
+  "agent": "Use when checking the DNA relay after a bot change: relay_mark right after deploying, relay_wait instead of sleeping, then relay_summary for starts, swaps, block reasons and end reasons.",
+  "widget": {
+    "title": "Relay watch",
+    "ratio": 1,
+    "actions": [
+      { "label": "Mark check-up", "call": "mark" },
+      { "label": "Since this version", "call": "setWindow", "args": { "window": "version" } },
+      { "label": "Last 10 min", "call": "setWindow", "args": { "window": 10 } }
+    ]
+  },
+  "permissions": { "workspace": "read" }
+}

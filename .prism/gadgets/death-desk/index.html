@@ -1,0 +1,101 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="prism-gadget://_sdk/base.css">
+<link rel="stylesheet" href="prism-gadget://_sdk/kit.css">
+<script src="prism-gadget://_sdk/prism.js"></script>
+<script src="prism-gadget://_sdk/kit.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box }
+html, body { height: 100%; margin: 0 }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px }
+.num { font-size: 22px; font-weight: 600 }
+.bars { display: flex; align-items: flex-end; gap: 3px; height: 52px }
+.bars i { flex: 1; min-width: 4px; background: var(--accent); opacity: .75; border-radius: 2px 2px 0 0 }
+.bars i.zero { opacity: .15 }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 10px; margin-top: 12px }
+.bar { height: 4px; border-radius: 2px; background: rgba(128,128,128,.25); margin-top: 3px }
+.bar i { display: block; height: 100%; border-radius: 2px; background: var(--accent) }
+.scroll { overflow-x: auto; min-width: 0 }
+table { border-collapse: collapse; width: 100% }
+th, td { text-align: left; padding: 3px 6px; white-space: nowrap; font-weight: 400 }
+th { color: var(--text3, #8b93a7); font-size: 12px }
+th.n, td.n { text-align: right }
+.name { max-width: 150px; overflow: hidden; text-overflow: ellipsis }
+button.mini { padding: 1px 8px; font-size: 12px }
+h3 { margin: 14px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--text3, #8b93a7); font-weight: 600 }
+.line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0 }
+</style></head>
+<body>
+<div class="k-app">
+  <div class="k-top">
+    <div class="k-title">How we die</div>
+    <span id="wins" class="k-row"></span>
+    <div class="k-grow dim line" id="sub"></div>
+    <button id="arena">Arena too</button>
+    <button id="go">Refresh</button>
+  </div>
+  <div class="k-body" id="body"><div class="k-empty">Reading recorded deaths… (a first scan of the folder can take a few seconds)</div></div>
+</div>
+<script>
+const { h, mount, ago, toast } = window.kit;
+const body = document.getElementById('body'), sub = document.getElementById('sub');
+const WINDOWS = [[1, '1 h'], [6, '6 h'], [24, '24 h'], [168, '7 d']];
+let hours = 6, kind = 'browser', data = null, busy = false;
+const fmt = n => n >= 10000 ? Math.round(n / 1000) + 'k' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(Math.round(n));
+
+function render() {
+  const d = data; if (!d) return;
+  if (d.error) { sub.textContent = ''; return mount(body, h('div', { class: 'k-empty' }, d.error)); }
+  sub.textContent = `${d.foeN} enemy deaths${d.teamN ? ` (+${d.teamN} team transfers)` : ''} · ${kind === 'all' ? 'games + arena' : 'game tabs'} · ${ago(d.t)}` + (d.truncated ? ' · oldest not all read' : '');
+  const maxB = Math.max(1, ...d.hist.map(b => b.n));
+  mount(body,
+    h('div', { class: 'stats' },
+      h('div', { class: 'k-card' }, h('div', { class: 'num' }, String(d.foeN)), h('div', { class: 'dim' }, 'enemy deaths')),
+      h('div', { class: 'k-card' }, h('div', { class: 'num' }, String(d.teamN)), h('div', { class: 'dim' }, 'team transfers')),
+      h('div', { class: 'k-card' }, h('div', { class: 'num' }, fmt(d.mass.foeSum)), h('div', { class: 'dim' }, 'mass lost to enemies')),
+      h('div', { class: 'k-card' }, h('div', { class: 'num' }, fmt(d.mass.foeMax)), h('div', { class: 'dim' }, 'worst single loss'))),
+    h('h3', null, 'Over the window'),
+    h('div', { class: 'k-card' },
+      h('div', { class: 'bars' }, ...d.hist.map(b => h('i', { class: b.n ? '' : 'zero', style: `height:${Math.max(3, 100 * b.n / maxB)}%`, title: `${b.n} deaths` }))),
+      h('div', { class: 'dim line', style: 'margin-top:4px' }, `${new Date(d.hist[0].from).toLocaleTimeString()} – now · ${d.totalFiles} recordings on disk`)),
+    h('div', { class: 'cols' },
+      h('div', { class: 'k-card' }, h('h3', { style: 'margin-top:0' }, 'Causes'),
+        ...d.causes.map(c => h('div', { style: 'margin-bottom:8px', title: `${c.n} deaths, ${fmt(c.mass)} mass` },
+          h('div', { class: 'line' }, h('span', { class: 'k-grow line' }, c.k), ' ', h('span', { class: 'dim mono' }, `${c.n}× · ${fmt(c.mass)}`)),
+          h('div', { class: 'bar' }, h('i', { style: `width:${100 * c.n / d.causes[0].n}%` }))))),
+      h('div', { class: 'k-card' }, h('h3', { style: 'margin-top:0' }, 'Who eats us'),
+        d.killers.length ? h('div', { class: 'scroll' }, h('table', {},
+          h('tr', null, h('th', null, 'player'), h('th', { class: 'n' }, 'kills'), h('th', { class: 'n' }, 'mass'), h('th', null, 'last'), h('th', null, '')),
+          ...d.killers.map(k => h('tr', null,
+            h('td', { class: 'name mono', title: k.name + (k.bot ? ' (server bot)' : '') + (k.teamer ? ' (teamer)' : '') }, k.name + (k.bot ? ' ⚙' : '') + (k.teamer ? ' ⚑' : '')),
+            h('td', { class: 'n mono' }, String(k.kills)),
+            h('td', { class: 'n mono' }, fmt(k.mass)),
+            h('td', { class: 'dim mono' }, ago(k.last)),
+            h('td', null, h('button', { class: 'mini', title: 'Mark as enemy in every tab (Friends & foes)', onclick: e => foe(k.name, e.target) }, 'Foe'))))))
+          : h('div', { class: 'dim' }, 'Nobody named as a killer in this window.'))),
+    h('h3', null, 'Recent'),
+    h('div', { class: 'k-log mono' }, ...d.recent.map(r => h('div', { class: 'line', title: r.cause },
+      `${new Date(r.t).toLocaleTimeString()} ${r.client} — ${r.cause} (${fmt(r.mass)} mass)`))));
+}
+async function foe(name, btn) { btn.disabled = true; const r = await prism.call('foe_add', { name }); toast(r.ok ? (r.note || 'marked') : (r.error || 'failed')); btn.disabled = false; }
+async function load() {
+  if (busy) return; busy = true;
+  try { data = await prism.call('summary', { hours, kind }); render(); } finally { busy = false; }
+}
+const wins = document.getElementById('wins');
+for (const [hrt, label] of WINDOWS) {
+  const b = document.createElement('button');
+  b.textContent = label; if (hrt === hours) b.classList.add('primary');
+  b.onclick = () => { hours = hrt; for (const x of wins.children) x.classList.remove('primary'); b.classList.add('primary'); load(); };
+  wins.appendChild(b);
+}
+document.getElementById('go').onclick = load;
+document.getElementById('arena').onclick = e => {
+  kind = kind === 'all' ? 'browser' : 'all';
+  e.target.textContent = kind === 'all' ? 'Game tabs only' : 'Arena too';
+  e.target.classList.toggle('primary', kind === 'all');
+  load();
+};
+prism.ready(async () => { load(); setInterval(load, 60000); });
+</script>
+</body></html>

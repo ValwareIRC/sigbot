@@ -1,0 +1,357 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="prism-gadget://_sdk/base.css">
+<link rel="stylesheet" href="prism-gadget://_sdk/kit.css">
+<script src="prism-gadget://_sdk/prism.js"></script>
+<script src="prism-gadget://_sdk/kit.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box }
+  html, body { height: 100%; margin: 0 }
+  .k-body { overflow: auto; min-height: 0 }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0 }
+  .row > * { min-width: 0 }
+  .row label { display: flex; gap: 6px; align-items: center; font-size: 13px }
+  input[type=number] { width: 80px }
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px }
+  @media (min-width: 900px) { .layout { grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr) } }
+  .stage { position: relative; width: 100%; aspect-ratio: 4 / 3; background: #0b0f17; border-radius: 8px; overflow: hidden }
+  .stage canvas { width: 100%; height: 100%; display: block; cursor: crosshair }
+  .hint { position: absolute; left: 8px; top: 8px; right: 8px; font-size: 12.5px; background: #000b; padding: 5px 9px; border-radius: 6px; pointer-events: none }
+  .hint.arm { background: #2b5d9cdd }
+  .player input[type=range] { flex: 1 1 180px; min-width: 0 }
+  .t { font-size: 12px; opacity: .7; font-variant-numeric: tabular-nums; white-space: nowrap }
+  .k-card { margin-bottom: 8px; min-width: 0 }
+  .card-h { font-size: 12px; opacity: .65; margin-bottom: 4px }
+  .step { display: flex; gap: 6px; align-items: center; font-size: 13px; padding: 3px 4px; border-radius: 4px; min-width: 0 }
+  .step:hover { background: #ffffff0d }
+  .step .tt { font-variant-numeric: tabular-nums; opacity: .7; flex: 0 0 auto; cursor: pointer }
+  .step .x { min-width: 0; flex: 1 1 auto; overflow-wrap: anywhere }
+  .step button { padding: 1px 7px; font-size: 12px }
+  .eat { font-size: 12.5px; padding: 2px 0; overflow-wrap: anywhere }
+  .A { color: #ff7a6b } .B { color: #4fd1a5 }
+  .btnA { border-color: #ff7a6b !important } .btnB { border-color: #4fd1a5 !important }
+  textarea { width: 100%; min-height: 56px; resize: vertical }
+  .demo { display: flex; gap: 6px; align-items: center; padding: 3px 0; min-width: 0 }
+  .demo .x { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer }
+  .muted { opacity: .65; font-size: 13px }
+  .sel { outline: 2px solid var(--accent) }
+</style>
+</head>
+<body>
+<div class="k-app">
+  <div class="k-top"><div class="k-title">DNA scratchpad</div><span class="muted">travel direction: up ↑</span></div>
+  <div class="k-body">
+    <div class="row">
+      <label><span class="A">A</span> mass <input id="massA" type="number" min="100" max="20000" step="50" value="1500"></label>
+      <label><span class="B">B</span> mass <input id="massB" type="number" min="100" max="20000" step="50" value="1500"></label>
+      <button id="resetPos" title="Put B back beside A">Side by side</button>
+      <button id="clear">Clear steps</button>
+    </div>
+    <div class="row">
+      <button id="splitA" class="btnA">Split A → click target</button>
+      <button id="splitB" class="btnB">Split B → click target</button>
+      <button id="aimA" class="btnA">Aim A at…</button>
+      <button id="aimB" class="btnB">Aim B at…</button>
+      <label title="After a step the player keeps moving that way (like holding the mouse out ahead). Off: it goes to the point and stops."><input id="keep" type="checkbox" checked> keep going</label>
+      <label title="Each new step goes this long after the moment you're looking at">step gap <input id="gap" type="number" min="0" max="5" step="0.1" value="0.5"> s</label>
+    </div>
+    <div class="layout">
+      <div>
+        <div class="stage"><canvas id="cv" width="1200" height="900"></canvas><div id="hint" class="hint"></div></div>
+        <div class="row player">
+          <button id="play">Play</button>
+          <select id="speed"><option value="0.25">¼×</option><option value="0.5" selected>½×</option><option value="1">1×</option><option value="2">2×</option></select>
+          <input id="scrub" type="range" min="0" max="0" value="0">
+          <span id="tt" class="t"></span>
+          <label class="muted"><input id="trails" type="checkbox" checked> trails</label>
+        </div>
+      </div>
+      <div>
+        <div class="k-card"><div class="card-h">Steps (click a time to jump there)</div><div id="steps" class="muted">No steps yet.</div></div>
+        <div class="k-card"><div class="card-h">What happened</div><div id="out" class="muted">—</div></div>
+        <div class="k-card"><div class="card-h">Save this demo for Claude</div>
+          <div class="row"><input id="name" placeholder="name, e.g. basic DNA" style="flex:1 1 140px"><button id="save" class="primary">Save</button></div>
+          <textarea id="note" placeholder="What should happen / what matters here (optional)"></textarea>
+          <div id="demos" class="muted" style="margin-top:6px">No saved demos.</div>
+          <div class="row"><button id="ask">Ask Claude to make the bots do this</button></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+// ---------------------------------------------------------------- game rules (same as the team sim)
+const TICK = 25, SPLIT_BOOST = 780, MIN_SPLIT = 128, MAX_CELLS = 16, MERGE_T = 60 * TICK, EAT = 1.140175425099138;
+const speed = s => 88 * Math.pow(s, -0.4396754) * 2.5;
+const canEat = (a, b) => a > b * EAT;
+const sizeOf = m => Math.sqrt(m * 100), massOf = s => s * s / 100;
+const COL = { A: '#ff7a6b', B: '#4fd1a5' };
+
+const P = { setup: { massA: 1500, massB: 1500, bx: 925, by: 0 }, steps: [], sim: null, frame: 0, playing: false, acc: 0, lastT: 0, arm: null, drag: null, cam: null };
+
+function simulate() {
+  const { massA, massB, bx, by } = P.setup;
+  let nextId = 1;
+  const cells = [{ id: nextId++, o: 'A', x: 0, y: 0, s: sizeOf(massA), b: 0, born: -MERGE_T }, { id: nextId++, o: 'B', x: bx, y: by, s: sizeOf(massB), b: 0, born: -MERGE_T }];
+  const mouse = { A: [0, -100000], B: [bx, -100000] };
+  const steps = P.steps.slice().sort((a, b) => a.t - b.t);
+  const endT = Math.max(6, (steps.length ? steps[steps.length - 1].t : 0) + 4);
+  const T = Math.round(endT * TICK);
+  const frames = [], eats = [];
+  const centre = o => { let x = 0, y = 0, m = 0; for (const c of cells) if (c.o === o) { const w = c.s * c.s; x += c.x * w; y += c.y * w; m += w; } return m ? { x: x / m, y: y / m, m: m / 100 } : null; };
+  const start = centre('A'), startB = centre('B');
+  let si = 0;
+  for (let tick = 0; tick <= T; tick++) {
+    // steps due now: aim (and split)
+    while (si < steps.length && Math.round(steps[si].t * TICK) <= tick) {
+      const st = steps[si++];
+      mouse[st.who] = [st.x, st.y];
+      const keepGoing = st.keep !== false;
+      if (st.action === 'split') {
+        const mine = cells.filter(c => c.o === st.who);
+        let count = mine.length;
+        for (const c of mine) {
+          if (c.s < MIN_SPLIT || count >= MAX_CELLS) continue;
+          let dx = st.x - c.x, dy = st.y - c.y, d = Math.hypot(dx, dy); if (d < 1) { dx = 0; dy = -1; d = 1; } dx /= d; dy /= d;
+          c.s /= Math.SQRT2; c.born = tick;
+          cells.push({ id: nextId++, o: st.who, x: c.x + 60 * dx, y: c.y + 60 * dy, s: c.s, b: SPLIT_BOOST, bx: dx, by: dy, born: tick });
+          count++;
+        }
+      }
+      // keep going that way afterwards (the mouse stays out ahead), unless the step says stop at the point
+      if (keepGoing) { const c = centre(st.who); if (c) { const dx = st.x - c.x, dy = st.y - c.y, d = Math.hypot(dx, dy) || 1; mouse[st.who] = [c.x + dx / d * 100000, c.y + dy / d * 100000]; } }
+    }
+    // movement: boost, then toward the owner's mouse
+    for (const c of cells) {
+      if (c.b >= 1) { const d = c.b / 9; c.x += c.bx * d; c.y += c.by * d; c.b -= d; }
+      const m = mouse[c.o], dx = m[0] - c.x, dy = m[1] - c.y, d = Math.hypot(dx, dy);
+      if (d >= 1) { const k = Math.min(speed(c.s), d); c.x += dx / d * k; c.y += dy / d * k; }
+    }
+    // own pieces push apart until they may merge
+    for (let i = 0; i < cells.length; i++) for (let j = i + 1; j < cells.length; j++) {
+      const a = cells[i], b = cells[j]; if (a.o !== b.o) continue;
+      if (tick - a.born > MERGE_T && tick - b.born > MERGE_T) continue; if (a.b > 150 || b.b > 150) continue;
+      let dx = b.x - a.x, dy = b.y - a.y; const d = Math.hypot(dx, dy) || 1, over = a.s + b.s - d; if (over <= 0) continue;
+      const wa = b.s * b.s / (a.s * a.s + b.s * b.s); a.x -= dx / d * over * wa; a.y -= dy / d * over * wa; b.x += dx / d * over * (1 - wa); b.y += dy / d * over * (1 - wa);
+    }
+    // eating between the two players (bigger first)
+    cells.sort((a, b) => b.s - a.s);
+    for (let i = 0; i < cells.length; i++) {
+      const a = cells[i]; if (a.dead) continue;
+      for (let j = i + 1; j < cells.length; j++) {
+        const b = cells[j]; if (b.dead || a.o === b.o) continue;
+        if (canEat(a.s, b.s) && Math.hypot(a.x - b.x, a.y - b.y) <= a.s - b.s / 3) {
+          eats.push({ t: tick / TICK, who: a.o, text: `${a.o} ate a piece of ${b.o} (${Math.round(massOf(b.s))} mass)`, tick });
+          a.s = Math.sqrt(a.s * a.s + b.s * b.s); b.dead = true;
+        }
+      }
+    }
+    for (let i = cells.length - 1; i >= 0; i--) if (cells[i].dead) cells.splice(i, 1);
+    frames.push({ t: tick, c: cells.map(c => [c.id, c.o, Math.round(c.x), Math.round(c.y), Math.round(c.s)]), m: { A: mouse.A.slice(), B: mouse.B.slice() } });
+  }
+  // how far forward (up) the pair got vs. just moving
+  const cA = centre('A'), cB = centre('B');
+  const all = [cA, cB].filter(Boolean); let fx = 0, fm = 0; for (const c of all) { fx += c.y * c.m; fm += c.m; }
+  const forward = Math.round(((start.y * massA + startB.y * massB) / (massA + massB)) - fx / fm);
+  const plain = Math.round(T * (speed(sizeOf(massA)) * massA + speed(sizeOf(massB)) * massB) / (massA + massB));
+  const last = frames[frames.length - 1].c;
+  const end = { t: T / TICK, massA: Math.round(last.filter(c => c[1] === 'A').reduce((a, c) => a + massOf(c[4]), 0)), massB: Math.round(last.filter(c => c[1] === 'B').reduce((a, c) => a + massOf(c[4]), 0)),
+    piecesA: last.filter(c => c[1] === 'A').length, piecesB: last.filter(c => c[1] === 'B').length, forward, plainForward: plain };
+  return { frames, eats, end };
+}
+
+// relative description of a step at the moment it happens (for Claude)
+function relOf(st, sim) {
+  const f = sim.frames[Math.min(sim.frames.length - 1, Math.round(st.t * TICK))]; if (!f) return {};
+  const ctr = o => { let x = 0, y = 0, m = 0, n = 0; for (const c of f.c) if (c[1] === o) { const w = c[4] * c[4]; x += c[2] * w; y += c[3] * w; m += w; n++; } return m ? { x: x / m, y: y / m, m: m / 100, n } : null; };
+  const me = ctr(st.who), other = ctr(st.who === 'A' ? 'B' : 'A'); if (!me) return {};
+  const ang = (dx, dy) => Math.round(Math.atan2(dx, -dy) * 180 / Math.PI); // 0 = up, + = right
+  const r = { aimDeg: ang(st.x - me.x, st.y - me.y), aimDist: Math.hypot(st.x - me.x, st.y - me.y), pieces: me.n, mass: me.m };
+  if (other) { r.partnerDeg = ang(other.x - me.x, other.y - me.y); r.partnerDist = Math.hypot(other.x - me.x, other.y - me.y); }
+  return r;
+}
+
+// ---------------------------------------------------------------- view
+function rebuild(keepFrame) {
+  P.sim = simulate();
+  const n = P.sim.frames.length;
+  $('scrub').max = String(n - 1);
+  if (!keepFrame) P.frame = Math.min(P.frame, n - 1);
+  $('scrub').value = String(P.frame);
+  for (const st of P.steps) st.rel = relOf(st, P.sim);
+  renderSteps(); renderOut(); draw();
+  prism.state.set('pad', { setup: P.setup, steps: P.steps.map(({ rel, ...s }) => s) });
+}
+function fmtAng(a) { const x = ((a % 360) + 540) % 360 - 180; return x === 0 ? 'straight up' : Math.abs(x) === 180 ? 'straight down' : `${Math.abs(x)}° ${x > 0 ? 'right' : 'left'}`; }
+function renderSteps() {
+  const box = $('steps'); box.innerHTML = '';
+  if (!P.steps.length) { box.className = 'muted'; box.textContent = 'No steps yet. Scrub to a moment, press Split A / Split B, then click where it should aim.'; return; }
+  box.className = '';
+  P.steps.slice().sort((a, b) => a.t - b.t).forEach(st => {
+    const d = document.createElement('div'); d.className = 'step';
+    const r = st.rel || {};
+    d.innerHTML = `<span class="tt"></span><span class="x"><b class="${st.who}">${st.who}</b> ${st.action === 'split' ? 'splits' : 'aims'} ${fmtAng(r.aimDeg || 0)}</span><button title="0.1 s earlier">−</button><button title="0.1 s later">+</button><button title="Remove">×</button>`;
+    d.querySelector('.tt').textContent = st.t.toFixed(1) + 's';
+    d.querySelector('.tt').onclick = () => { P.frame = Math.round(st.t * TICK); $('scrub').value = String(P.frame); draw(); };
+    const [mi, pl, rm] = d.querySelectorAll('button');
+    mi.onclick = () => { st.t = Math.max(0, +(st.t - 0.1).toFixed(2)); rebuild(); };
+    pl.onclick = () => { st.t = +(st.t + 0.1).toFixed(2); rebuild(); };
+    rm.onclick = () => { P.steps.splice(P.steps.indexOf(st), 1); rebuild(); };
+    box.appendChild(d);
+  });
+}
+function renderOut() {
+  const o = P.sim, box = $('out'); box.className = ''; box.innerHTML = '';
+  if (!o.eats.length) { const d = document.createElement('div'); d.className = 'muted'; d.textContent = 'Nothing got eaten.'; box.appendChild(d); }
+  for (const e of o.eats) { const d = document.createElement('div'); d.className = 'eat'; d.innerHTML = `<span class="t">${e.t.toFixed(2)}s</span> <b class="${e.who}">${e.who}</b> `; d.appendChild(document.createTextNode(e.text.replace(/^[AB] /, ''))); d.style.cursor = 'pointer'; d.onclick = () => { P.frame = Math.max(0, e.tick - 8); $('scrub').value = String(P.frame); draw(); }; box.appendChild(d); }
+  const e = o.end, d = document.createElement('div'); d.className = 'eat'; d.style.marginTop = '6px';
+  d.textContent = `After ${e.t.toFixed(1)} s: A ${e.massA} mass in ${e.piecesA} piece(s), B ${e.massB} in ${e.piecesB}. The pair moved ${e.forward} up (just moving: ${e.plainForward}).`;
+  box.appendChild(d);
+}
+function camera(f) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  const take = (x, y, r) => { x0 = Math.min(x0, x - r); y0 = Math.min(y0, y - r); x1 = Math.max(x1, x + r); y1 = Math.max(y1, y + r); };
+  for (const c of f.c) take(c[2], c[3], c[4]);
+  // keep the whole run in view horizontally-ish: include the start
+  take(0, 0, 200); take(P.setup.bx, P.setup.by, 200);
+  const pad = 500; let w = x1 - x0 + pad * 2, h = y1 - y0 + pad * 2;
+  if (w / h > 4 / 3) h = w * 3 / 4; else w = h * 4 / 3;
+  return { cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, w: Math.max(w, 2400) * (P.zoom || 1) };
+}
+function draw() {
+  const cv = $('cv'), g = cv.getContext('2d'), W = cv.width, H = cv.height;
+  g.fillStyle = '#0b0f17'; g.fillRect(0, 0, W, H);
+  if (!P.sim) return;
+  const f = P.sim.frames[P.frame]; if (!f) return;
+  const cam = P.cam = camera(f), sc = W / cam.w;
+  const X = x => (x - cam.cx) * sc + W / 2, Y = y => (y - cam.cy) * sc + H / 2;
+  P.toWorld = (px, py) => [(px - W / 2) / sc + cam.cx, (py - H / 2) / sc + cam.cy];
+  g.strokeStyle = '#ffffff0d'; g.lineWidth = 1;
+  const step = 500;
+  for (let x = Math.floor((cam.cx - cam.w / 2) / step) * step; x < cam.cx + cam.w / 2; x += step) { g.beginPath(); g.moveTo(X(x), 0); g.lineTo(X(x), H); g.stroke(); }
+  for (let y = Math.floor((cam.cy - cam.w * 0.4) / step) * step; y < cam.cy + cam.w * 0.4; y += step) { g.beginPath(); g.moveTo(0, Y(y)); g.lineTo(W, Y(y)); g.stroke(); }
+  // trails
+  if ($('trails').checked) {
+    const ids = new Map();
+    for (let i = Math.max(0, P.frame - 75); i <= P.frame; i += 3) for (const c of P.sim.frames[i].c) { if (!ids.has(c[0])) ids.set(c[0], []); ids.get(c[0]).push(c); }
+    for (const [id, pts] of ids) { if (pts.length < 2) continue; g.strokeStyle = COL[pts[0][1]] + '55'; g.lineWidth = 2; g.beginPath(); pts.forEach((c, i) => (i ? g.lineTo(X(c[2]), Y(c[3])) : g.moveTo(X(c[2]), Y(c[3])))); g.stroke(); }
+  }
+  // aims
+  for (const o of ['A', 'B']) {
+    const mine = f.c.filter(c => c[1] === o); if (!mine.length) continue;
+    let mx = 0, my = 0, mm = 0; for (const c of mine) { const w = c[4] * c[4]; mx += c[2] * w; my += c[3] * w; mm += w; } mx /= mm; my /= mm;
+    let [ax, ay] = f.m[o]; const d = Math.hypot(ax - mx, ay - my); if (d > 1500) { ax = mx + (ax - mx) / d * 1500; ay = my + (ay - my) / d * 1500; }
+    g.strokeStyle = COL[o]; g.globalAlpha = 0.7; g.setLineDash([8, 6]); g.lineWidth = 2; g.beginPath(); g.moveTo(X(mx), Y(my)); g.lineTo(X(ax), Y(ay)); g.stroke(); g.setLineDash([]); g.globalAlpha = 1;
+  }
+  // cells
+  for (const c of f.c.slice().sort((a, b) => b[4] - a[4])) {
+    const [id, o, x, y, s] = c, r = Math.max(2, s * sc);
+    g.beginPath(); g.arc(X(x), Y(y), r, 0, Math.PI * 2); g.fillStyle = COL[o] + 'bb'; g.fill(); g.strokeStyle = COL[o]; g.lineWidth = 2; g.stroke();
+    if (r > 16) { g.fillStyle = '#fff'; g.font = `${Math.max(10, Math.min(20, r / 3))}px system-ui`; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(o + ' ' + Math.round(massOf(s)), X(x), Y(y)); }
+  }
+  // step markers due at this moment
+  for (const st of P.steps) if (Math.abs(Math.round(st.t * TICK) - P.frame) <= 2) { g.beginPath(); g.arc(X(st.x), Y(st.y), 9, 0, Math.PI * 2); g.strokeStyle = COL[st.who]; g.lineWidth = 3; g.stroke(); }
+  // up arrow
+  g.fillStyle = '#ffffff70'; g.font = '14px system-ui'; g.textAlign = 'right'; g.fillText('travel ↑', W - 12, 22);
+  $('tt').textContent = `${(P.frame / TICK).toFixed(2)} / ${((P.sim.frames.length - 1) / TICK).toFixed(1)} s`;
+  const hint = $('hint');
+  if (P.arm) { hint.className = 'hint arm'; hint.textContent = `Click where ${P.arm.who} should ${P.arm.action === 'split' ? 'split toward' : 'aim'} at ${(P.frame / TICK).toFixed(2)} s (Esc to cancel)`; }
+  else { hint.className = 'hint'; hint.textContent = P.frame === 0 ? 'At 0 s you can drag B to place it. Then add steps: Split A / Split B, click a target. Mouse wheel zooms, double-click resets.' : `${(P.frame / TICK).toFixed(2)} s · drag the slider to pick a moment, then add a step.`; }
+}
+
+// ---------------------------------------------------------------- input
+function arm(who, action) {
+  // a new step goes "step gap" after the latest step at or before now (or now, if none)
+  P.arm = { who, action };
+  for (const id of ['splitA', 'splitB', 'aimA', 'aimB']) $(id).classList.toggle('sel', id === (action === 'split' ? 'split' : 'aim') + who);
+  draw();
+}
+function disarm() { P.arm = null; for (const id of ['splitA', 'splitB', 'aimA', 'aimB']) $(id).classList.remove('sel'); draw(); }
+$('splitA').onclick = () => arm('A', 'split'); $('splitB').onclick = () => arm('B', 'split');
+$('aimA').onclick = () => arm('A', 'aim'); $('aimB').onclick = () => arm('B', 'aim');
+document.addEventListener('keydown', e => { if (e.key === 'Escape') disarm(); });
+const evPos = e => { const r = $('cv').getBoundingClientRect(); return [(e.clientX - r.left) * $('cv').width / r.width, (e.clientY - r.top) * $('cv').height / r.height]; };
+$('cv').addEventListener('mousedown', e => {
+  if (!P.toWorld) return;
+  const [px, py] = evPos(e), [wx, wy] = P.toWorld(px, py);
+  if (P.arm) {
+    const t = +(P.frame / TICK).toFixed(2);
+    P.steps.push({ t, who: P.arm.who, action: P.arm.action, x: Math.round(wx), y: Math.round(wy), keep: $('keep').checked });
+    const gap = +$('gap').value || 0;
+    disarm(); rebuild();
+    // move on by the step gap, ready for the next one
+    P.frame = Math.min(P.sim.frames.length - 1, P.frame + Math.round(gap * TICK)); $('scrub').value = String(P.frame); draw();
+    return;
+  }
+  if (P.frame === 0) {
+    const f = P.sim.frames[0];
+    const hit = f.c.find(c => Math.hypot(c[2] - wx, c[3] - wy) < c[4] + 30);
+    if (hit && hit[1] === 'B') P.drag = { dx: P.setup.bx - wx, dy: P.setup.by - wy };
+  }
+});
+window.addEventListener('mousemove', e => {
+  if (!P.drag || !P.toWorld) return;
+  const [px, py] = evPos(e), [wx, wy] = P.toWorld(px, py);
+  P.setup.bx = Math.round(wx + P.drag.dx); P.setup.by = Math.round(wy + P.drag.dy);
+  rebuild();
+});
+window.addEventListener('mouseup', () => { P.drag = null; });
+$('massA').onchange = e => { P.setup.massA = Math.max(100, +e.target.value || 1500); rebuild(); };
+$('massB').onchange = e => { P.setup.massB = Math.max(100, +e.target.value || 1500); rebuild(); };
+$('resetPos').onclick = () => { P.setup.bx = Math.round(sizeOf(P.setup.massA) + sizeOf(P.setup.massB) + 150); P.setup.by = 0; rebuild(); };
+$('clear').onclick = () => { P.steps = []; P.frame = 0; rebuild(); };
+$('scrub').oninput = e => { P.frame = +e.target.value; P.playing = false; $('play').textContent = 'Play'; draw(); };
+$('trails').onchange = draw;
+// mouse wheel: zoom out / in; double-click: back to normal
+$('cv').addEventListener('wheel', e => { e.preventDefault(); P.zoom = Math.max(0.25, Math.min(12, (P.zoom || 1) * (e.deltaY > 0 ? 1.15 : 1 / 1.15))); draw(); }, { passive: false });
+$('cv').addEventListener('dblclick', () => { P.zoom = 1; draw(); });
+$('play').onclick = () => { if (P.frame >= P.sim.frames.length - 1) P.frame = 0; P.playing = !P.playing; $('play').textContent = P.playing ? 'Pause' : 'Play'; };
+function loop(ts) {
+  if (P.playing) { P.acc += (P.lastT ? ts - P.lastT : 0) * (+$('speed').value || 1);
+    while (P.acc >= 40) { P.acc -= 40; if (P.frame < P.sim.frames.length - 1) P.frame++; else { P.playing = false; $('play').textContent = 'Play'; break; } }
+    $('scrub').value = String(P.frame); draw(); }
+  P.lastT = ts; requestAnimationFrame(loop);
+}
+
+// ---------------------------------------------------------------- demos
+function renderDemos(list) {
+  const box = $('demos'); box.innerHTML = '';
+  if (!list || !list.length) { box.className = 'muted'; box.textContent = 'No saved demos.'; return; }
+  box.className = '';
+  for (const d of list.slice().sort((a, b) => b.saved - a.saved)) {
+    const el = document.createElement('div'); el.className = 'demo';
+    el.innerHTML = '<span class="x"></span><button title="Delete">×</button>';
+    el.querySelector('.x').textContent = d.name + (d.note ? ' — ' + d.note : '');
+    el.querySelector('.x').title = 'Load this demo';
+    el.querySelector('.x').onclick = () => { P.setup = { ...d.setup0 }; P.steps = d.steps.map(({ rel, ...s }) => s); $('massA').value = P.setup.massA; $('massB').value = P.setup.massB; $('name').value = d.name; $('note').value = d.note || ''; P.frame = 0; rebuild(); };
+    el.querySelector('button').onclick = async () => { renderDemos(await prism.call('remove', { name: d.name })); };
+    box.appendChild(el);
+  }
+}
+$('save').onclick = async () => {
+  const name = $('name').value.trim() || 'demo ' + new Date().toLocaleTimeString();
+  $('name').value = name;
+  const ang = (dx, dy) => Math.atan2(dx, -dy);
+  const d = { name, note: $('note').value.trim(), setup0: { ...P.setup },
+    setup: { massA: P.setup.massA, massB: P.setup.massB, bRight: P.setup.bx, bAhead: -P.setup.by },
+    steps: P.steps.slice().sort((a, b) => a.t - b.t).map(s => ({ ...s })),
+    outcome: { eats: P.sim.eats.map(e => ({ t: e.t, text: e.text })), end: P.sim.end } };
+  renderDemos(await prism.call('save', d));
+  window.kit.toast('Saved "' + name + '"');
+};
+$('ask').onclick = () => { const n = $('name').value.trim(); prism.agent.send(`Look at my DNA scratchpad demo${n ? ' "' + n + '"' : 's'} (dna_demos) and make the bots' DNA relay work like that.`); };
+
+prism.ready(async () => {
+  const saved = await prism.state.get('pad', null);
+  if (saved && saved.setup) { P.setup = saved.setup; P.steps = saved.steps || []; $('massA').value = P.setup.massA; $('massB').value = P.setup.massB; }
+  rebuild();
+  renderDemos(await prism.call('list', {}));
+  prism.on('demos', renderDemos);
+  requestAnimationFrame(loop);
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,87 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="prism-gadget://_sdk/base.css">
+<link rel="stylesheet" href="prism-gadget://_sdk/kit.css">
+<script src="prism-gadget://_sdk/prism.js"></script>
+<script src="prism-gadget://_sdk/kit.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box }
+html, body { height: 100%; margin: 0 }
+.k-body { overflow: auto; min-height: 0; display: flex; flex-direction: column; gap: 12px }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap }
+.seg button.on { outline: 2px solid var(--accent) }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px }
+.box { background: #ffffff08; border-radius: 8px; padding: 10px; min-width: 0 }
+.cap { font-size: 12px; opacity: .65; margin-bottom: 6px }
+.f { padding: 6px 0; border-bottom: 1px solid #ffffff10; min-width: 0 }
+.f .k { font-size: 11px; font-weight: 600; letter-spacing: .03em; margin-right: 6px }
+.f .tx { font-size: 15px }
+.f .w { font-size: 12px; opacity: .65; overflow-wrap: anywhere }
+.k.said { color: var(--mint) } .k.preview { color: var(--accent) } .k.held { color: var(--amber) } .k.quiet { opacity: .55 } .k.error, .k.failed { color: var(--rose) }
+.l { font-size: 13px; padding: 2px 0; overflow-wrap: anywhere }
+.l b { font-weight: 600 }
+.l.ours b { color: var(--amber) }
+input[type=text], textarea { width: 100%; min-width: 0 }
+textarea { min-height: 60px; resize: vertical }
+.scroll { max-height: 340px; overflow: auto }
+</style></head>
+<body>
+<div class="k-app">
+  <div class="k-top"><div class="k-title">Chat brain</div><div class="k-grow dim" id="st" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></div></div>
+  <div class="k-body">
+    <div class="row seg" id="modes"></div>
+    <div class="row"><label>Speak as <select id="as"></select></label><span class="dim" style="font-size:12px">model <span id="model"></span> · at most one line per <span id="gap"></span> s, <span id="per"></span> per 5 min</span></div>
+    <div class="cols">
+      <div class="box"><div class="cap">Decisions (newest first)</div><div id="feed" class="scroll"></div></div>
+      <div class="box"><div class="cap">Game chat</div><div id="chat" class="scroll"></div></div>
+    </div>
+    <div class="box"><div class="cap">Try it: pretend someone said…</div>
+      <div class="row"><input id="tname" type="text" placeholder="name" style="max-width:140px"><input id="ttext" type="text" placeholder="e.g. lol nice split" style="flex:1"><button id="try">Ask the brain</button></div></div>
+    <div class="box"><div class="cap">Say something yourself (through the chosen tab)</div>
+      <div class="row"><input id="mine" type="text" maxlength="80" placeholder="your line" style="flex:1"><button id="send">Send</button></div></div>
+    <div class="box"><div class="cap">Personality</div><textarea id="persona"></textarea><div class="row" style="margin-top:6px"><button id="savep">Save</button></div></div>
+  </div>
+</div>
+<script>
+const { h, mount } = window.kit;
+const $ = id => document.getElementById(id);
+let S = {}, feed = [], lines = [], ours = [];
+const hm = t => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+const WORD = { said: 'SAID', preview: 'WOULD SAY', held: 'HELD BACK', quiet: 'STAYED QUIET', error: 'ERROR', failed: 'NOT SENT' };
+function renderModes() {
+  mount($('modes'), ...[['off', 'Off'], ['preview', 'Preview (never sends)'], ['live', 'Live (talks in game)']].map(([m, l]) =>
+    h('button', { class: (S.mode === m ? 'on ' : '') + (m === 'live' ? 'primary' : ''), onclick: async () => { S = await prism.call('set', { key: 'mode', value: m }); renderModes(); } }, l)));
+  $('model').textContent = S.model; $('gap').textContent = S.minGapSec; $('per').textContent = S.maxPer5Min;
+}
+function renderFeed() {
+  if (!feed.length) return mount($('feed'), h('div', { class: 'dim' }, 'Nothing yet. It decides each time someone says something or our team kills / dies.'));
+  mount($('feed'), ...feed.map(f => h('div', { class: 'f' },
+    h('div', {}, h('span', { class: 'k ' + f.kind }, WORD[f.kind] || f.kind), h('span', { class: 'dim', style: 'font-size:12px' }, hm(f.t))),
+    f.text ? h('div', { class: 'tx' }, '“' + f.text + '”') : null,
+    h('div', { class: 'w' }, (f.why || '') + (f.about ? ' · re: ' + f.about : '')))));
+}
+function renderChat() {
+  if (!lines.length) return mount($('chat'), h('div', { class: 'dim' }, 'No chat seen yet.'));
+  mount($('chat'), ...lines.slice(-40).reverse().map(l => h('div', { class: 'l' + (ours.includes(l.name) ? ' ours' : '') }, h('b', {}, (l.fromServer ? '[server]' : l.name || '?') + ': '), l.text)));
+}
+async function load() {
+  const d = await prism.call('info');
+  S = d.settings; feed = d.feed; lines = d.lines; ours = d.ours;
+  $('st').textContent = d.status + (ours.length ? ' · us: ' + ours.join(', ') : '');
+  mount($('as'), h('option', { value: 0 }, 'a bot tab (automatic)'), ...d.tabs.map(t => h('option', { value: t.id }, `#${t.id} ${t.name || '?'}${t.bot === false ? ' (you)' : ''}`)));
+  $('as').value = String(S.speakAs || 0);
+  if (document.activeElement !== $('persona')) $('persona').value = S.persona;
+  renderModes(); renderFeed(); renderChat();
+}
+$('as').onchange = async () => { S = await prism.call('set', { key: 'speakAs', value: +$('as').value }); };
+$('try').onclick = async () => { const t = $('ttext').value.trim(); if (!t) return; $('try').disabled = true; await prism.call('test', { text: t, name: $('tname').value.trim() || 'Tester' }); $('try').disabled = false; };
+$('send').onclick = async () => { const t = $('mine').value.trim(); if (!t) return; const r = await prism.call('say', { text: t }); if (r.ok) $('mine').value = ''; else kit.toast(r.error || 'not sent'); };
+$('savep').onclick = async () => { S = await prism.call('set', { key: 'persona', value: $('persona').value }); kit.toast('Saved'); };
+prism.on('feed', d => { feed = d.feed; renderFeed(); });
+prism.on('line', l => { lines.push(l); lines = lines.slice(-60); renderChat(); });
+prism.on('status', d => { $('st').textContent = d.status + (ours.length ? ' · us: ' + ours.join(', ') : ''); });
+prism.on('settings', s => { S = s; renderModes(); });
+setInterval(load, 20000);
+prism.ready(load);
+</script>
+</body></html>

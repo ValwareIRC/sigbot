@@ -1,0 +1,8 @@
+{
+  "id": "timer-schedule",
+  "name": "Timer Schedule",
+  "description": "Every scheduled timer / cron job with its next fire time, and whether each run actually arrived in the session or was silently dropped.",
+  "backend": "backend.mjs",
+  "permissions": { "workspace": "read" },
+  "widget": { "title": "Timers", "handler": "widget", "refreshSeconds": 60 }
+}

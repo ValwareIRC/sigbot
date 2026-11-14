@@ -1,0 +1,80 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="prism-gadget://_sdk/base.css">
+<link rel="stylesheet" href="prism-gadget://_sdk/kit.css">
+<script src="prism-gadget://_sdk/prism.js"></script>
+<script src="prism-gadget://_sdk/kit.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box }
+html, body { height: 100%; margin: 0 }
+.k-body { overflow: auto; min-height: 0; display: flex; flex-direction: column; gap: 12px }
+textarea { width: 100%; min-height: 110px; resize: vertical; font: 16px/1.4 system-ui, sans-serif; padding: 10px; border-radius: 8px }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap }
+.row label { display: flex; gap: 6px; align-items: center; font-size: 13px; min-width: 0 }
+select { max-width: 260px; min-width: 0 }
+input[type=range] { width: 120px }
+.big { font-size: 16px; padding: 10px 22px }
+.hist { display: flex; flex-direction: column; gap: 6px }
+.h { display: flex; gap: 8px; align-items: center; padding: 7px 10px; border-radius: 8px; background: #ffffff0a; min-width: 0 }
+.h .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.h button { flex: 0 0 auto }
+.hint { font-size: 12px; opacity: .6 }
+.cap { font-size: 12px; opacity: .65 }
+</style></head>
+<body>
+<div class="k-app">
+  <div class="k-top"><div class="k-title">Say it</div><div class="k-grow"></div><span id="st" class="k-pill">ready</span></div>
+  <div class="k-body">
+    <textarea id="txt" placeholder="Type what the computer should say…"></textarea>
+    <div class="row">
+      <button id="go" class="primary big">Speak</button>
+      <button id="stop">Stop</button>
+      <label><input id="save" type="checkbox"> also save a WAV to Downloads</label>
+    </div>
+    <div class="hint">Ctrl+Enter speaks. The computer's own volume still applies.</div>
+    <div class="row">
+      <label>Voice <select id="voice"></select></label>
+      <label>Speed <input id="rate" type="range" min="-10" max="10" value="0"><span id="rateV">0</span></label>
+      <label>Loudness <input id="vol" type="range" min="0" max="100" value="100"><span id="volV">100</span></label>
+    </div>
+    <div><div class="cap">Recent</div><div id="hist" class="hist"></div></div>
+  </div>
+</div>
+<script>
+const { h, mount } = window.kit;
+const $ = id => document.getElementById(id);
+let history = [];
+function setSpeaking(on) { $('st').textContent = on ? 'speaking…' : 'ready'; $('st').className = 'k-pill' + (on ? ' warn' : ''); }
+function renderHist() {
+  if (!history.length) return mount($('hist'), h('div', { class: 'hint' }, 'Nothing said yet.'));
+  mount($('hist'), ...history.map(x => h('div', { class: 'h' }, h('div', { class: 't', title: x.text }, x.text),
+    h('button', { onclick: () => speak(x.text) }, 'Again'), h('button', { onclick: () => { $('txt').value = x.text; $('txt').focus(); } }, 'Edit'))),
+    h('button', { onclick: async () => { await prism.call('clear'); } }, 'Clear recent'));
+}
+async function speak(text) {
+  text = (text ?? $('txt').value).trim(); if (!text) return;
+  const args = { text, voice: $('voice').value, rate: +$('rate').value, volume: +$('vol').value, save: $('save').checked };
+  prism.state.set('prefs', { voice: args.voice, rate: args.rate, volume: args.volume });
+  setSpeaking(true);
+  const r = await prism.call('say', args);
+  if (r && r.error) { setSpeaking(false); kit.toast(r.error); }
+  else if (r && r.wav) kit.toast('Saved ' + r.wav.split(/[\\/]/).pop());
+}
+$('go').onclick = () => speak();
+$('stop').onclick = () => prism.call('stop');
+$('txt').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); speak(); } });
+$('rate').oninput = () => $('rateV').textContent = $('rate').value;
+$('vol').oninput = () => $('volV').textContent = $('vol').value;
+prism.on('state', d => { if ('speaking' in d) setSpeaking(d.speaking); if (d.history) { history = d.history; renderHist(); } });
+prism.ready(async () => {
+  const info = await prism.call('info');
+  const prefs = await prism.state.get('prefs', {});
+  mount($('voice'), ...info.voices.map(v => h('option', { value: v.name }, `${v.name.replace(/^Microsoft /, '').replace(/ Desktop$/, '')} (${v.culture}, ${v.gender})`)));
+  if (prefs.voice && info.voices.some(v => v.name === prefs.voice)) $('voice').value = prefs.voice;
+  if (typeof prefs.rate === 'number') { $('rate').value = prefs.rate; $('rateV').textContent = prefs.rate; }
+  if (typeof prefs.volume === 'number') { $('vol').value = prefs.volume; $('volV').textContent = prefs.volume; }
+  history = info.history; renderHist(); setSpeaking(info.speaking);
+  $('txt').focus();
+});
+</script>
+</body></html>

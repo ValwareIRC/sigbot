@@ -1,0 +1,8 @@
+{
+  "id": "death-desk",
+  "name": "How we die",
+  "description": "What kills our bots, from the deaths the Sigmally Lab records: causes, the players who eat us most (one click to mark them enemies), mass lost and the trend.",
+  "backend": "backend.mjs",
+  "permissions": { "network": true },
+  "widget": { "title": "Deaths", "handler": "widget", "refreshSeconds": 120 }
+}

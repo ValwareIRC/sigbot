@@ -1,0 +1,8 @@
+{
+  "id": "team-study",
+  "name": "Team study runs",
+  "description": "Each team-study run: spacing, size ratio, handoffs, pours, kills and speed vs one cell for the server's teams and our bots, side by side across runs.",
+  "backend": "backend.mjs",
+  "permissions": { "shell": true },
+  "widget": { "title": "Team study", "handler": "widget", "refreshSeconds": 120 }
+}

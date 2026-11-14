@@ -25,9 +25,13 @@ const settings = Object.assign({}, DefaultSettings, {
     // the live server has no virus cap (fed viruses always split there); the repo default (30) made fed viruses ignore
     // every shot once the map was full - mining did nothing in the arena
     virusMaxCount: 100000, playerEjectDelay: 1,   // live takes a W press every tick (measured)
+    ejectedSize: 31.62, ejectingLoss: 31.62,       // live: a blob is 10 mass, lossless (measured)
     serverName: 'Sigmally Lab arena',
     chatEnabled: false,
 });
+// LIVE RULE (recordings 2026-11-09/10): shot viruses grow (100 -> 104 -> 109 -> 114 -> 118) and split. The repo has that
+// line commented out in EjectedCell.getEatResult, so until 2026-11-10 no virus was ever fed in this arena.
+{ const EC = req('src/cells/EjectedCell'); const g0 = EC.prototype.getEatResult; EC.prototype.getEatResult = function (other) { if (other.type === 2) return other.getEjectedEatResult(false); return g0.call(this, other); }; }
 const handle = new ServerHandle(settings);
 handle.protocols.register(req('src/protocols/SigmallyProtocol'), req('src/protocols/LegacyProtocol'), req('src/protocols/ModernProtocol'));
 handle.gamemodes.register(req('src/gamemodes/FFA'), req('src/gamemodes/Teams'), req('src/gamemodes/LastManStanding'));

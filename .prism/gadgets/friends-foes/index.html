@@ -8,73 +8,183 @@
 <style>
 *, *::before, *::after { box-sizing: border-box }
 html, body { height: 100%; margin: 0 }
-.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px }
-.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; min-width: 0 }
-.k-grow { flex: 1; min-width: 0 }
-.name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 15px }
-.item { display: flex; gap: 6px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line, rgba(127,127,127,.2)) }
-.item:last-child { border-bottom: 0 }
-h3 { margin: 0 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; opacity: .75 }
-.vip { border-left: 3px solid var(--amber) }
-.friends { border-left: 3px solid #5ad1ff }
-.enemies { border-left: 3px solid var(--rose) }
-button { min-height: 34px }
-.seg button.on { outline: 2px solid currentColor }
-input[type=text] { flex: 1; min-width: 0; min-height: 34px }
-.why { font-size: 12px; opacity: .65; white-space: nowrap }
-.note { font-size: 12px; opacity: .75; margin-top: 6px }
+.bar { padding: 10px 12px 0; display: flex; flex-direction: column; gap: 8px }
+.search { width: 100%; min-height: 38px; font-size: 15px; padding: 6px 10px }
+.vip { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; min-width: 0; padding: 6px 10px; border-left: 3px solid var(--amber); border-radius: 6px; background: rgba(127,127,127,.08); font-size: 13px }
+.vip b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.tabs { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--line, rgba(127,127,127,.25)) }
+.tab { min-height: 34px; padding: 4px 12px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: none; color: inherit; opacity: .7; font-size: 13px }
+.tab.on { opacity: 1; border-bottom-color: currentColor; font-weight: 600 }
+.tab.f.on { color: #5ad1ff } .tab.e.on { color: var(--rose) }
+.found { font-size: 13px; opacity: .75; padding: 6px 0 }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px }
+.tile { display: flex; gap: 6px; align-items: center; min-width: 0; min-height: 36px; padding: 4px 8px; border-radius: 6px; border-left: 3px solid rgba(127,127,127,.5); background: rgba(127,127,127,.1); cursor: pointer; font-size: 14px }
+.tile:hover, .tile:focus-visible { background: rgba(127,127,127,.2); outline: none }
+.tile.friend { border-left-color: #5ad1ff } .tile.enemy { border-left-color: var(--rose) }
+.tile .n { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+.tile .star { color: var(--amber); font-size: 12px }
+.open { grid-column: 1 / -1; flex-wrap: wrap; cursor: default; background: rgba(127,127,127,.18); padding: 8px 10px }
+.open .n { flex-basis: 100%; white-space: normal; overflow-wrap: anywhere; font-size: 15px; font-weight: 600 }
+.open .acts { display: flex; gap: 6px; flex-wrap: wrap; align-items: center }
+.tag { font-size: 11px; opacity: .7; text-transform: uppercase; letter-spacing: .04em }
+.why { font-size: 12px; opacity: .65 }
+.add { grid-column: 1 / -1; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 8px 10px; border: 1px dashed rgba(127,127,127,.4); border-radius: 6px; font-size: 13px }
+.add q { font-weight: 600; overflow-wrap: anywhere }
+button { min-height: 32px }
+.note { font-size: 12px; opacity: .6; margin-top: 12px }
 </style></head>
 <body>
 <div class="k-app">
   <div class="k-top"><div class="k-title">Friends &amp; foes</div><div class="k-grow dim" id="sub"></div></div>
+  <div class="bar">
+    <input class="search" id="q" type="search" placeholder="Find a player (fancy letters and typos are fine)" aria-label="Find a player" autocomplete="off" spellcheck="false">
+    <div id="top"></div>
+  </div>
   <div class="k-body" id="body"><div class="k-empty">Loading…</div></div>
 </div>
 <script>
 const { h, mount } = window.kit;
-const body = document.getElementById('body'), sub = document.getElementById('sub');
-let d = null, typed = '';
+const body = document.getElementById('body'), sub = document.getElementById('sub'), topEl = document.getElementById('top'), q = document.getElementById('q');
+let d = null, tab = 'friend', open = null; // open: 'role:name' of the tile showing its actions
 const call = async (m, a) => { d = await prism.call(m, a); render(); };
-function person(name, right) { return h('div', { class: 'item' }, h('div', { class: 'name', title: name }, name), ...right); }
+
+// ---- matching: fold fancy/look-alike letters to plain a-z0-9, then fuzzy-match
+const LOOK = {};
+const addLook = (from, to) => [...from].forEach((c, i) => LOOK[c] = to[i]);
+addLook('ᴀʙᴄᴅᴇꜰғɢʜɪᴊᴋʟᴍɴᴏᴘǫʀꜱᴛᴜᴠᴡʏᴢ', 'abcdeffghijklmnopqrstuvwyz');
+addLook('аеорсухкмтнвіјѕԁԛԝгпиляшщьъёїґү', 'aeopcyxkmthbijsdqwrnnnrwwbbeigy');
+addLook('ΑΒΕΖΗΙΚΜΝΟΡΤΥΧαβεικνορτυχωγ', 'abezhikmnoptyxabeikvoptuxwy');
+addLook('ɑɡɩɪʟɴɵɾʂʋʍʜʀłøđħŧƀƅ', 'agiilnorsvmhrlodhtbb');
+addLook('ÆæŒœßÞþÐð', 'aaoosppdd');
+const LEET = { '0': 'o', '1': 'i', '3': 'e', '4': 'a', '5': 's', '7': 't', '8': 'b', '@': 'a', '$': 's', '!': 'i', '|': 'l' };
+function fold(s, leet) {
+  let out = '';
+  for (const ch of String(s).normalize('NFKD')) {
+    if (/\p{M}/u.test(ch)) continue;
+    let c = LOOK[ch] || ch.toLowerCase();
+    if (leet && LEET[c]) c = LEET[c];
+    if (/[a-z0-9]/.test(c)) out += c;
+  }
+  return out;
+}
+// edit distance from q to the best-matching stretch of n
+function near(qs, n) {
+  let prev = new Array(qs.length + 1).fill(0).map((_, i) => i), best = prev[qs.length];
+  for (let j = 1; j <= n.length; j++) {
+    const cur = [0];
+    for (let i = 1; i <= qs.length; i++) cur[i] = Math.min(prev[i] + 1, cur[i - 1] + 1, prev[i - 1] + (qs[i - 1] === n[j - 1] ? 0 : 1));
+    best = Math.min(best, cur[qs.length]); prev = cur;
+  }
+  return best;
+}
+function subseq(qs, n) { // letters in order, not too spread out
+  let i = 0, first = -1, last = -1;
+  for (let j = 0; j < n.length && i < qs.length; j++) if (n[j] === qs[i]) { if (first < 0) first = j; last = j; i++; }
+  return i === qs.length && last - first < qs.length * 2.5;
+}
+// lower = better; null = no match
+function score(name, raw) {
+  const rq = raw.trim().toLowerCase(), rn = name.toLowerCase();
+  if (rn === rq) return 0;
+  if (rq && rn.includes(rq)) return 1 + rn.indexOf(rq) / 100;
+  let best = null;
+  for (const leet of [false, true]) {
+    const qs = fold(raw, leet), n = fold(name, leet);
+    if (!qs) continue;
+    let s = null;
+    if (n === qs) s = 2;
+    else if (n.startsWith(qs)) s = 3;
+    else if (n.includes(qs)) s = 4 + n.indexOf(qs) / 100;
+    else if (qs.length >= 3 && subseq(qs, n)) s = 6;
+    else {
+      const allow = qs.length < 4 ? 0 : qs.length < 8 ? 1 : 2, e = allow ? near(qs, n) : 99;
+      if (e <= allow) s = 7 + e;
+    }
+    if (s !== null) best = best === null ? s + (leet ? .5 : 0) : Math.min(best, s + (leet ? .5 : 0));
+  }
+  return best;
+}
+
+// ---- view
+function people() {
+  const listed = new Set([...d.friends, ...d.enemies]);
+  return [
+    ...d.friends.map(name => ({ name, role: 'friend' })),
+    ...d.enemies.map(name => ({ name, role: 'enemy' })),
+    ...(d.seen || []).filter(s => !listed.has(s.name)).map(s => ({ name: s.name, role: 'seen', why: s.why })),
+  ];
+}
+const key = p => p.role + ':' + p.name;
+const ROLE = { friend: 'friend', enemy: 'enemy', seen: 'seen lately' };
+function actions(p) {
+  const b = (label, fn, cls) => h('button', { class: cls || '', onclick: e => { e.stopPropagation(); open = null; fn(); } }, label);
+  const isVip = d.vipName === p.name && d.vipMode;
+  if (p.role === 'friend') return [
+    b(isVip && d.vipMode === 'feed' ? 'Feeding ✓' : 'Feed', () => call('vip', { name: p.name, mode: 'feed' }), isVip && d.vipMode === 'feed' ? 'primary' : ''),
+    b(isVip && d.vipMode === 'protect' ? 'Protecting ✓' : 'Protect', () => call('vip', { name: p.name, mode: 'protect' }), isVip && d.vipMode === 'protect' ? 'primary' : ''),
+    b('Make enemy', () => call('role', { name: p.name, role: 'enemy' })),
+    b('Remove', () => call('role', { name: p.name, role: 'none' }))];
+  if (p.role === 'enemy') return [
+    b('Make friend', () => call('role', { name: p.name, role: 'friend' })),
+    b('Remove', () => call('role', { name: p.name, role: 'none' }))];
+  return [b('Friend', () => call('role', { name: p.name, role: 'friend' }), 'primary'), b('Enemy', () => call('role', { name: p.name, role: 'enemy' }))];
+}
+function tile(p, showRole) {
+  const k = key(p), isOpen = open === k, star = d.vipName === p.name && d.vipMode;
+  const toggle = () => { open = isOpen ? null : k; render(); };
+  if (isOpen) return h('div', { class: 'tile open ' + p.role },
+    h('div', { class: 'n' }, p.name, star ? h('span', { class: 'star' }, d.vipMode === 'feed' ? '  ★ fed by all bots' : '  ★ protected by all bots') : null),
+    h('div', { class: 'acts' }, h('span', { class: 'tag' }, ROLE[p.role]), p.why ? h('span', { class: 'why' }, p.why) : null, ...actions(p),
+      h('button', { title: 'close', 'aria-label': 'close', onclick: e => { e.stopPropagation(); open = null; render(); } }, '✕')));
+  return h('div', { class: 'tile ' + p.role, role: 'button', tabindex: '0', title: p.name + (showRole ? ' · ' + ROLE[p.role] : '') + (p.why ? ' · ' + p.why : ''),
+    onclick: toggle, onkeydown: e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } } },
+    h('span', { class: 'n' }, p.name), star ? h('span', { class: 'star' }, '★') : null,
+    showRole && p.role === 'seen' ? h('span', { class: 'tag' }, 'seen') : null);
+}
+function addRow(text) {
+  return h('div', { class: 'add' }, h('span', {}, 'Add ', h('q', {}, text), ' exactly as typed:'),
+    h('button', { class: 'primary', onclick: () => { q.value = ''; open = null; call('role', { name: text, role: 'friend' }); } }, 'Friend'),
+    h('button', { onclick: () => { q.value = ''; open = null; call('role', { name: text, role: 'enemy' }); } }, 'Enemy'));
+}
+function renderTop() {
+  const vipOn = d.vipName && d.vipMode;
+  const vip = h('div', { class: 'vip' }, h('span', { class: 'tag' }, 'VIP'),
+    vipOn ? h('b', { title: d.vipName }, d.vipName) : h('span', { class: 'dim' }, 'nobody: open a friend and pick Feed or Protect'),
+    vipOn ? h('span', { class: 'k-pill ' + (d.vipMode === 'feed' ? 'warn' : 'ok') }, d.vipMode === 'feed' ? 'all bots feed them' : 'all bots protect them') : null,
+    vipOn ? h('button', { onclick: () => call('vip', { mode: '' }) }, 'Stop') : null);
+  const searching = q.value.trim() !== '';
+  const all = people(), count = r => all.filter(p => p.role === r).length;
+  const tabs = searching ? null : h('div', { class: 'tabs', role: 'tablist' },
+    ...[['friend', 'Friends', 'f'], ['enemy', 'Enemies', 'e'], ['seen', 'Seen lately', 's']].map(([r, label, c]) =>
+      h('button', { class: 'tab ' + c + (tab === r ? ' on' : ''), role: 'tab', 'aria-selected': String(tab === r), onclick: () => { tab = r; open = null; render(); } }, `${label} (${count(r)})`)));
+  mount(topEl, h('div', { style: 'display:flex;flex-direction:column;gap:8px' }, vip, tabs));
+}
 function render() {
   if (!d) return;
-  if (d.error) { sub.textContent = ''; return mount(body, h('div', { class: 'k-empty' }, d.error)); }
+  if (d.error) { sub.textContent = ''; mount(topEl, null); return mount(body, h('div', { class: 'k-empty' }, d.error)); }
   sub.textContent = `${d.tabs || 0} game tab${d.tabs === 1 ? '' : 's'} get these`;
-  const vipOn = d.vipName && d.vipMode;
-  const vipCard = h('div', { class: 'k-card vip' },
-    h('h3', {}, 'VIP: all bots work for one player'),
-    vipOn ? h('div', { class: 'row' }, h('div', { class: 'name' }, d.vipName),
-      h('span', { class: 'k-pill ' + (d.vipMode === 'feed' ? 'warn' : 'ok') }, d.vipMode === 'feed' ? 'Bots feed them' : 'Bots protect them')) : h('div', { class: 'dim' }, 'Nobody. Pick a friend below.'),
-    vipOn ? h('div', { class: 'row seg', style: 'margin-top:8px' },
-      h('button', { class: d.vipMode === 'feed' ? 'on primary' : '', onclick: () => call('vip', { name: d.vipName, mode: 'feed' }) }, 'Feed (dive in)'),
-      h('button', { class: d.vipMode === 'protect' ? 'on primary' : '', onclick: () => call('vip', { name: d.vipName, mode: 'protect' }) }, 'Protect'),
-      h('button', { onclick: () => call('vip', { mode: '' }) }, 'Stop')) : null,
-    h('div', { class: 'note' }, 'In game: point at a player and press U (feed, then protect, then off).'));
-  const friends = h('div', { class: 'k-card friends' }, h('h3', {}, `Friends (${d.friends.length}): never targeted`),
-    d.friends.length ? null : h('div', { class: 'dim' }, 'None yet.'),
-    ...d.friends.map(n => person(n, [
-      h('button', { onclick: () => call('vip', { name: n, mode: 'feed' }) }, 'Feed'),
-      h('button', { onclick: () => call('vip', { name: n, mode: 'protect' }) }, 'Protect'),
-      h('button', { title: 'take off the list', onclick: () => call('role', { name: n, role: 'none' }) }, '✕')])));
-  const enemies = h('div', { class: 'k-card enemies' }, h('h3', {}, `Enemies (${d.enemies.length}): go after them`),
-    d.enemies.length ? null : h('div', { class: 'dim' }, 'None yet.'),
-    ...d.enemies.map(n => person(n, [h('button', { title: 'take off the list', onclick: () => call('role', { name: n, role: 'none' }) }, '✕')])));
-  const inp = h('input', { type: 'text', placeholder: 'Exact name as in the game', value: typed, oninput: e => typed = e.target.value });
-  const addCard = h('div', { class: 'k-card' }, h('h3', {}, 'Add a player'),
-    h('div', { class: 'row' }, inp),
-    h('div', { class: 'row', style: 'margin-top:8px' },
-      h('button', { class: 'primary', onclick: () => { const n = typed.trim(); if (n) { typed = ''; call('role', { name: n, role: 'friend' }); } } }, 'Add friend'),
-      h('button', { onclick: () => { const n = typed.trim(); if (n) { typed = ''; call('role', { name: n, role: 'enemy' }); } } }, 'Add enemy')),
-    h('div', { class: 'note' }, 'In game: point at a player and press L (friend, then enemy, then off).'));
-  const listed = new Set([...d.friends, ...d.enemies]);
-  const seen = (d.seen || []).filter(s => !listed.has(s.name));
-  const seenCard = h('div', { class: 'k-card' }, h('h3', {}, 'Seen lately'),
-    seen.length ? null : h('div', { class: 'dim' }, 'Nobody new.'),
-    ...seen.slice(0, 30).map(s => person(s.name, [h('span', { class: 'why' }, s.why),
-      h('button', { onclick: () => call('role', { name: s.name, role: 'friend' }) }, 'Friend'),
-      h('button', { onclick: () => call('role', { name: s.name, role: 'enemy' }) }, 'Enemy')])));
-  mount(body, h('div', { class: 'grid' }, vipCard, addCard, friends, enemies, seenCard));
+  renderTop();
+  const raw = q.value.trim(), all = people();
+  const hints = h('div', { class: 'note' }, 'In game: point at a player and press L (friend, then enemy, then off) or U (VIP: feed, then protect, then off).');
+  if (raw) {
+    const hits = all.map(p => ({ p, s: score(p.name, raw) })).filter(x => x.s !== null).sort((a, b) => a.s - b.s || a.p.name.localeCompare(b.p.name)).map(x => x.p);
+    const exact = all.some(p => p.name === raw && p.role !== 'seen');
+    return mount(body, h('div', {},
+      h('div', { class: 'found' }, hits.length ? `${hits.length} match${hits.length === 1 ? '' : 'es'}` : 'Nobody on the lists or seen lately matches.'),
+      h('div', { class: 'grid' }, ...hits.map(p => tile(p, true)), exact ? null : addRow(raw.slice(0, 40))), hints));
+  }
+  const list = all.filter(p => p.role === tab);
+  if (tab !== 'seen') list.sort((a, b) => fold(a.name).localeCompare(fold(b.name)) || a.name.localeCompare(b.name));
+  mount(body, h('div', {},
+    list.length ? h('div', { class: 'grid' }, ...list.map(p => tile(p, false))) : h('div', { class: 'k-empty' }, tab === 'seen' ? 'Nobody new seen lately.' : 'None yet. Search above to find and add someone.'),
+    hints));
 }
-prism.on('lists', x => { d = x; if (document.activeElement && document.activeElement.tagName === 'INPUT') return; render(); });
+q.addEventListener('input', () => { open = null; render(); });
+q.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { q.value = ''; open = null; render(); }
+  if (e.key === 'Enter') { const t = body.querySelector('.tile'); if (t && !t.classList.contains('open')) t.click(); }
+});
+prism.on('lists', x => { d = x; render(); });
 prism.ready(async () => { d = await prism.call('state'); render(); });
 </script>
 </body></html>

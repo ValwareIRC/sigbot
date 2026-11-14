@@ -27,25 +27,38 @@ const { h, mount, ago } = window.kit;
 const body = document.getElementById('body'), sub = document.getElementById('sub');
 const WORD = { ok: 'Up to date', stale: 'Old version', silent: 'Frozen', gone: 'Gone' };
 const PILL = { ok: 'ok', stale: 'warn', silent: 'bad', gone: 'bad' };
+const WAKE = {
+  Edge: 'Edge put this tab to sleep. Click into it once; to stop it happening, add one.sigmally.com to Edge’s "Never put these sites to sleep" list.',
+  Opera: 'Opera snoozes background tabs. Click into it once to wake it; to stop it, turn off "Snooze inactive tabs to save memory" in Opera’s settings (Battery saver too), or keep each Opera tab in its own window.',
+};
 let data = null;
+function goneLine(t) {
+  if (t.lastSeen) return `left the Lab ${ago(t.lastSeen)}` + (t.version ? ` (was ${t.version}${t.lastMode ? ', ' + t.lastMode : ''})` : '');
+  return t.usual ? `not connected to the Lab (you usually have ${t.usual} ${t.browser} tab${t.usual > 1 ? 's' : ''})` : 'not connected to the Lab';
+}
 function render() {
   const d = data; if (!d) return;
   if (d.error) { sub.textContent = ''; return mount(body, h('div', { class: 'k-empty' }, d.error)); }
-  const bad = d.tabs.filter(t => t.state !== 'ok').length;
-  sub.textContent = `Script ${d.latest || '?'} · ${d.tabs.length} tab${d.tabs.length === 1 ? '' : 's'} · ${bad ? bad + ' need attention' : 'all current'} · checked ${ago(d.t)}`;
+  const live = d.tabs.filter(t => t.state !== 'gone').length, bad = d.tabs.filter(t => t.state !== 'ok').length;
+  sub.textContent = `Script ${d.latest || '?'} · ${live} of ${d.tabs.length} tab${d.tabs.length === 1 ? '' : 's'} connected · ${bad ? bad + ' need attention' : 'all current'} · checked ${ago(d.t)}`;
   if (!d.tabs.length) return mount(body, h('div', { class: 'k-empty' }, 'No game tabs connected.'));
   const order = { gone: 0, silent: 0, stale: 1, ok: 2 };
-  const tabs = [...d.tabs].sort((a, b) => order[a.state] - order[b.state] || a.id - b.id);
+  const tabs = [...d.tabs].sort((a, b) => order[a.state] - order[b.state] || String(a.label).localeCompare(String(b.label)) || a.id - b.id);
   mount(body, h('div', { class: 'tabs' }, ...tabs.map(t => h('div', { class: 'k-card tab ' + t.state },
     h('div', { class: 'row' }, h('span', { class: 'k-dot ' + (t.state === 'ok' ? 'ok' : t.state === 'stale' ? 'warn' : 'bad') }),
-      h('div', { class: 'k-grow big' }, t.browser || t.name), h('span', { class: 'k-pill ' + PILL[t.state] }, WORD[t.state])),
-    h('div', { class: 'line mono' }, t.state === 'gone' ? (t.version ? `left the Lab ${ago(t.lastSeen)} (was ${t.version})` : 'not connected to the Lab') : t.state === 'silent' ? `last heard from ${ago(t.lastSeen)}` : `version ${t.version}` + (t.state === 'ok' ? `, ${t.ms} ms` : '')),
+      h('div', { class: 'k-grow big' }, t.label || t.browser || t.name), h('span', { class: 'k-pill ' + PILL[t.state] }, WORD[t.state])),
+    h('div', { class: t.state === 'gone' ? 'mono' : 'line mono', style: t.state === 'gone' ? 'overflow-wrap:anywhere' : '' }, t.state === 'gone' ? goneLine(t) : t.state === 'silent' ? `last heard from ${ago(t.lastSeen)}` : `version ${t.version}` + (t.state === 'ok' ? `, ${t.ms} ms` : '')),
     t.state === 'gone' ? null : h('div', { class: 'line dim' }, `#${t.id} · bot ${t.bot === false ? 'off (you)' : 'on'}${t.hidden ? ' · hidden' : ''}${t.mode ? ' · ' + t.mode : ''}`),
     t.state === 'stale' ? h('div', { class: 'row note' }, h('button', { class: 'primary', onclick: e => swap(t.id, e.target) }, 'Update this tab')) :
-    t.state === 'silent' || t.state === 'gone' ? h('div', { class: 'dim note' }, t.browser === 'Edge' ? 'Edge put this tab to sleep. Click into it once; to stop it happening, add one.sigmally.com to Edge’s "Never put these sites to sleep" list.' : 'Click into this tab, or reload it (update the installed script first if it comes back old).') : null
+    t.state === 'silent' || t.state === 'gone' ? h('div', { class: 'note' },
+      h('div', { class: 'dim' }, t.state === 'gone'
+        ? 'Its bot may still be playing - it just lost its link to the Lab (a Lab restart does that) and hasn’t come back. Reload that window (F5) to reconnect it; since 3.54.16 a link that gets stuck retries by itself.' + (WAKE[t.browser] ? ' If the tab was asleep instead: ' + WAKE[t.browser] : '')
+        : (WAKE[t.browser] || 'Click into this tab, or reload it (update the installed script first if it comes back old).')),
+      t.state === 'gone' ? h('div', { class: 'row', style: 'margin-top:6px' }, h('button', { onclick: e => forget(t.key, e.target), title: 'Closed it on purpose? Stop expecting it.' }, 'I closed it')) : null) : null
   ))));
 }
 async function swap(id, btn) { btn.disabled = true; btn.textContent = 'Updating…'; const r = await prism.call('swap', { id }); btn.textContent = r.ok ? 'Sent' : (r.error || 'failed'); }
+async function forget(key, btn) { btn.disabled = true; data = await prism.call('forget', { key }); render(); }
 async function refresh() { const b = document.getElementById('go'); b.disabled = true; data = await prism.call('refresh'); b.disabled = false; render(); }
 document.getElementById('go').onclick = refresh;
 prism.on('tabs', d => { data = d; render(); });

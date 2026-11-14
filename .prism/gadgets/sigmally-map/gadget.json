@@ -1,0 +1,9 @@
+{
+  "id": "sigmally-map",
+  "name": "Sigmally map",
+  "description": "The whole Sigmally map at once for every game tab: each tab's view area, its cells, the players and viruses it sees, who is around each one, and the chat (with replies from the tab you pick). Reads the Sigmally Lab.",
+  "permissions": {
+    "network": true
+  },
+  "backend": "backend.mjs"
+}

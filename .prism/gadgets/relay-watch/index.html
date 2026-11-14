@@ -1,0 +1,152 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="prism-gadget://_sdk/base.css">
+<link rel="stylesheet" href="prism-gadget://_sdk/kit.css">
+<script src="prism-gadget://_sdk/prism.js"></script>
+<script src="prism-gadget://_sdk/kit.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box }
+  html, body { height: 100%; margin: 0 }
+  .k-body { overflow: auto; min-height: 0; container-type: inline-size }
+  .top-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; min-width: 0; flex: 1 }
+  .top-row > * { min-width: 0 }
+  .sub { font-size: 12px; opacity: .65; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0 }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px }
+  .chips button { padding: 4px 10px; font-size: 12px }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin-bottom: 10px }
+  .stat { background: var(--panel, #141a24); border-radius: 8px; padding: 8px 10px; min-width: 0 }
+  .stat .v { font-size: 22px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+  .stat .v small { font-size: 12px; font-weight: 400; opacity: .65; margin-left: 4px }
+  .stat .l { font-size: 12px; opacity: .65; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+  .stat.good .v { color: var(--mint) }
+  .stat.bad .v { color: var(--amber) }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px }
+  .card-h { font-size: 12px; opacity: .65; margin-bottom: 6px }
+  .bar { display: grid; grid-template-columns: minmax(0, 1fr) 46px; gap: 6px; align-items: center; font-size: 13px; padding: 3px 0 }
+  .bar .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0 }
+  .bar .track { grid-column: 1 / -1; height: 6px; background: #ffffff10; border-radius: 3px; overflow: hidden }
+  .bar .track i { display: block; height: 100%; background: var(--accent); border-radius: 3px }
+  .bar .track i.warn { background: var(--amber) }
+  .bar .num { text-align: right; opacity: .8; font-variant-numeric: tabular-nums }
+  .tl { display: flex; align-items: flex-end; gap: 2px; height: 64px; margin-top: 4px }
+  .tl div { flex: 1 1 0; min-width: 2px; display: flex; flex-direction: column; justify-content: flex-end; gap: 1px; height: 100% }
+  .tl b { display: block; background: var(--accent); border-radius: 2px 2px 0 0; opacity: .85 }
+  .tl s { display: block; background: var(--mint); border-radius: 2px 2px 0 0; text-decoration: none }
+  .legend { display: flex; gap: 12px; font-size: 12px; opacity: .7; margin-top: 4px; flex-wrap: wrap }
+  .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: -1px }
+  .ev { display: flex; gap: 8px; font-size: 13px; padding: 4px 0; border-bottom: 1px solid #ffffff0d; min-width: 0 }
+  .ev .tm { opacity: .55; flex: 0 0 auto; font-variant-numeric: tabular-nums }
+  .ev .tx { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0 }
+  .ev.good .tx { color: var(--mint) }
+  .ev.bad .tx { color: var(--amber) }
+  .ev.start .tx { color: var(--accent) }
+  .muted { opacity: .65; font-size: 13px }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 10px 0 }
+  .k-card { margin-bottom: 10px; min-width: 0 }
+  /* small (phone widget): just the headline */
+  @container (max-width: 360px) {
+    .stats { grid-template-columns: repeat(2, minmax(0, 1fr)) }
+    .stat .v { font-size: 19px }
+    .hide-small { display: none }
+  }
+</style>
+</head>
+<body>
+<div class="k-app">
+  <div class="k-top">
+    <div class="k-title">Relay watch</div>
+    <div class="top-row"><span id="live" class="k-pill">waiting</span><span id="sub" class="sub"></span></div>
+  </div>
+  <div class="k-body" id="body"></div>
+</div>
+<script>
+const { h, mount } = window.kit;
+let S = null;
+const pct = x => Math.round(x * 100) + '%';
+const tm = t => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+function stat(label, value, extra, cls) {
+  return h('div', { class: 'stat ' + (cls || '') }, h('div', { class: 'v' }, String(value), extra ? h('small', null, extra) : null), h('div', { class: 'l' }, label));
+}
+function bars(list, warn) {
+  if (!list.length) return h('div', { class: 'muted' }, 'Nothing yet.');
+  const max = Math.max(...list.map(x => x.share));
+  return h('div', null, ...list.map(x => h('div', { class: 'bar', title: x.title || '' },
+    h('span', { class: 'name' }, x.name), h('span', { class: 'num' }, x.num),
+    h('span', { class: 'track' }, h('i', { class: warn ? 'warn' : '', style: `width:${max ? Math.max(2, x.share / max * 100) : 0}%` })))));
+}
+function setWindow(w) { prism.call('setWindow', { window: w }).then(render); }
+
+function render(s) {
+  if (s) S = s;
+  s = S;
+  const live = document.getElementById('live'), sub = document.getElementById('sub');
+  const fresh = s && s.lastAt && Date.now() - s.lastAt < 20000;
+  live.className = 'k-pill ' + (fresh ? 'ok' : s && s.lastAt ? 'warn' : '');
+  live.textContent = fresh ? `${s.bots.length} bot${s.bots.length === 1 ? '' : 's'} reporting` : s && s.lastAt ? 'quiet' : 'no reports yet';
+  sub.textContent = s ? (typeof s.window === 'number' ? s.label : `${s.label} · ${s.minutes} min`) : '';
+  const body = document.getElementById('body');
+  body.innerHTML = '';
+  if (!s) { mount(body, h('div', { class: 'k-empty' }, 'Loading…')); return; }
+
+  const w = s.window;
+  const chips = h('div', { class: 'chips' },
+    ...[['version', 'Since this version'], ['mark', 'Since check-up'], [10, '10 min'], [30, '30 min'], [60, '1 h']].map(([id, l]) =>
+      h('button', { class: String(w) === String(id) ? 'primary' : '', onclick: () => setWindow(id) }, l)));
+
+  const swapCls = s.results ? (s.swapped / s.results >= 0.5 ? 'good' : 'bad') : '';
+  const stats = h('div', { class: 'stats' },
+    stat('Relays started', s.starts, s.perMin + '/min', s.starts ? 'good' : ''),
+    stat('Swapped mass', s.results ? `${s.swapped}/${s.results}` : '0', s.results ? pct(s.swapped / s.results) : '', swapCls),
+    stat('Mass moved', s.moved, s.lost ? `${s.lost} lost` : ''),
+    stat('Time relaying', pct(s.runningShare), s.sampleSecs ? `of ${s.sampleSecs} s` : ''));
+
+  const empty = !s.lastAt ? h('div', { class: 'k-card' }, h('div', { class: 'muted' },
+    s.fileFound ? 'The feed is empty so far. The bots report once they run v3.20.2 or newer and play together.'
+      : 'No relay reports yet. The Sigmally Lab writes them as soon as a bot on v3.20.2 or newer is connected.')) : null;
+
+  const blockList = s.blocks.slice(0, 9).map(b => ({ name: b.why, share: b.share, num: pct(b.share), title: `${b.secs} s` }));
+  const blocks = h('div', { class: 'k-card' }, h('div', { class: 'card-h' }, "Why no relay started (share of the time)"), bars(blockList, true));
+
+  const endList = Object.entries(s.endWhy).sort((a, b) => b[1] - a[1]).map(([k, n]) => ({ name: k, share: n / Math.max(1, s.ends), num: String(n) }));
+  const ends = h('div', { class: 'k-card' }, h('div', { class: 'card-h' }, `How relays ended (${s.ends})`), bars(endList));
+
+  const extra = h('div', { class: 'k-card hide-small' }, h('div', { class: 'card-h' }, 'Relay splits and outcomes'),
+    h('div', { class: 'muted' }, `${s.splits.eat} eating splits, ${s.splits.advance} advancing splits` +
+      (Object.keys(s.startWhy).length ? ` · started for ${Object.entries(s.startWhy).map(([k, n]) => `${k} ${n}`).join(', ')}` : '') +
+      (Object.keys(s.verdicts).length ? ` · results: ${Object.entries(s.verdicts).map(([k, n]) => `${k} ${n}`).join(', ')}` : '')));
+
+  const maxBar = Math.max(1, ...s.bars.map(b => b.starts));
+  const tl = h('div', { class: 'k-card hide-small' }, h('div', { class: 'card-h' }, `Per ${s.step >= 120000 ? Math.round(s.step / 60000) + ' minutes' : 'minute'}`),
+    !s.starts ? h('div', { class: 'muted' }, 'No relays started in this window.') : h('div', { class: 'tl' }, ...s.bars.map(b => {
+      const el = h('div', { title: `${tm(b.t)}: ${b.starts} started, ${b.swaps} swapped` });
+      const sw = Math.min(b.swaps, b.starts);
+      el.append(h('b', { style: `height:${(b.starts - sw) / maxBar * 100}%` }), h('s', { style: `height:${sw / maxBar * 100}%` }));
+      return el;
+    })),
+    !s.starts ? null : h('div', { class: 'legend' }, h('span', null, h('i', { style: 'background:var(--accent)' }), 'started'), h('span', null, h('i', { style: 'background:var(--mint)' }), 'swapped mass')));
+
+  const recent = h('div', { class: 'k-card hide-small' }, h('div', { class: 'card-h' }, 'Latest'),
+    ...(s.recent.length ? s.recent.slice(0, 25).map(r => h('div', { class: 'ev ' + (r.ev === 'start' ? 'start' : r.good === true ? 'good' : r.good === false ? 'bad' : '') },
+      h('span', { class: 'tm' }, tm(r.t)), h('span', { class: 'tx', title: `#${r.cid} ${r.text}` }, `#${r.cid} ${r.text}`))) : [h('div', { class: 'muted' }, 'Nothing yet.')]));
+
+  const actions = h('div', { class: 'row hide-small' },
+    h('button', { class: 'primary', onclick: () => prism.call('mark', {}).then(render) }, 'Mark check-up now'),
+    s.mark ? h('span', { class: 'muted' }, `mark at ${tm(s.mark.t)}`) : null,
+    s.mark ? h('button', { onclick: () => prism.call('clearMark', {}).then(render) }, 'Clear mark') : null,
+    h('button', { onclick: () => prism.agent.send(`In Relay watch (relay_summary, window "${s.window}"), look at why DNA relays don't start or don't swap mass, and fix the bot.`) }, 'Ask Claude about this'));
+
+  mount(body, chips, stats, empty, h('div', { class: 'grid2' }, blocks, ends), extra, tl, actions, recent);
+}
+
+prism.ready(async () => {
+  render(await prism.call('summary', {}));
+  prism.on('update', render);
+  // the window slides (and "quiet" needs noticing) even when nothing new arrives
+  setInterval(async () => render(await prism.call('summary', {})), 10000);
+});
+</script>
+</body>
+</html>

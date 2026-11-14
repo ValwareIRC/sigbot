@@ -1,0 +1,9 @@
+{
+  "id": "loop-watch",
+  "name": "Loop Watch",
+  "description": "The Sigmally tuning loop at a glance: whether it is running, paused or overdue, the current round and what it did, bots in the game over the last 12 hours, alerts fired, and Pause / Run a round now. Watches the bots itself and alerts your phone when two or fewer are in the game.",
+  "backend": "backend.mjs",
+  "permissions": { "network": true },
+  "agent": "The live tuning loop's panel. After every loop round call loop_round with a one-line summary and when the next round is due. Check loop_status at the start of each round: if it says paused, only read the numbers - do not change or deploy the bot.",
+  "widget": { "title": "Loop", "handler": "widget", "refreshSeconds": 60 }
+}

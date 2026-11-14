@@ -1,0 +1,8 @@
+{
+  "id": "deploy-desk",
+  "name": "Deploy desk",
+  "description": "Userscript version in the file vs in each game tab, one button that hot-swaps it into every answering tab and checks each came back, and the deploy history.",
+  "backend": "backend.mjs",
+  "permissions": { "network": true, "workspace": "read" },
+  "widget": { "title": "Deploy", "handler": "widget", "refreshSeconds": 60 }
+}

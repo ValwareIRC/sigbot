@@ -1,0 +1,101 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="prism-gadget://_sdk/base.css">
+<link rel="stylesheet" href="prism-gadget://_sdk/kit.css">
+<script src="prism-gadget://_sdk/prism.js"></script>
+<script src="prism-gadget://_sdk/kit.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box }
+  html, body { height: 100%; margin: 0 }
+  .wrap { display: flex; flex-direction: column; gap: 10px; padding: 10px; min-width: 0 }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; min-width: 0 }
+  .big { font-size: 15px; font-weight: 600 }
+  .ell { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0 }
+  .wrapt { overflow-wrap: anywhere; min-width: 0 }
+  .graph { width: 100%; height: 130px; display: block }
+  .axis { display: flex; justify-content: space-between; font-size: 11px }
+  .item { display: flex; gap: 8px; padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,.06); min-width: 0 }
+  .item .when { flex: none; width: 42px; opacity: .6; font-variant-numeric: tabular-nums }
+  .item .what { min-width: 0; overflow-wrap: anywhere }
+  .btns { display: flex; flex-wrap: wrap; gap: 8px }
+  .btns button { min-height: 34px }
+  .stat { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px }
+</style>
+</head>
+<body>
+<div class="k-app">
+  <div class="k-top"><div class="k-title">Loop Watch</div></div>
+  <div class="k-body"><div class="wrap" id="root"><div class="k-empty">Loading…</div></div></div>
+</div>
+<script>
+const { h, mount } = window.kit;
+const hhmm = t => { const d = new Date(t); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); };
+const ago = t => { const s = Math.round((Date.now() - t) / 1000); return s < 60 ? s + ' s ago' : s < 3600 ? Math.round(s / 60) + ' min ago' : Math.round(s / 3600) + ' h ago'; };
+const WORD = { running: ['ok', 'Running'], paused: ['warn', 'Paused'], overdue: ['bad', 'Overdue'], waiting: ['run', 'Waiting for the first round'], finished: ['ok', 'Finished'] };
+let v = null;
+
+function graph(points) {
+  const W = 600, H = 130, pad = 4;
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`); svg.setAttribute('preserveAspectRatio', 'none'); svg.setAttribute('class', 'graph');
+  svg.setAttribute('role', 'img');
+  const t1 = Date.now(), t0 = t1 - 12 * 3600e3;
+  const max = Math.max(10, ...points.map(p => p[1] || 0));
+  const X = t => pad + (W - 2 * pad) * (t - t0) / (t1 - t0), Y = n => H - pad - (H - 2 * pad) * n / max;
+  const add = (tag, attrs) => { const e = document.createElementNS('http://www.w3.org/2000/svg', tag); for (const k in attrs) e.setAttribute(k, attrs[k]); svg.appendChild(e); return e; };
+  add('line', { x1: 0, x2: W, y1: Y(2), y2: Y(2), stroke: 'var(--rose)', 'stroke-dasharray': '6 5', 'stroke-width': 1.5, 'vector-effect': 'non-scaling-stroke', opacity: .8 });
+  let d = '', gaps = [];
+  for (const [t, n] of points) {
+    if (n === null) { d += ' '; gaps.push(t); continue; }
+    d += (d === '' || d.endsWith(' ') ? 'M' : 'L') + X(t).toFixed(1) + ',' + Y(n).toFixed(1);
+  }
+  if (d.trim()) add('path', { d: d.replace(/ +/g, ' '), fill: 'none', stroke: 'var(--accent)', 'stroke-width': 2, 'vector-effect': 'non-scaling-stroke' });
+  for (const t of gaps) add('rect', { x: X(t) - 1, y: 0, width: 3, height: H, fill: 'var(--amber)', opacity: .35 });
+  const low = points.filter(p => p[1] !== null).map(p => p[1]);
+  svg.setAttribute('aria-label', `Bots in the game over the last 12 hours; now ${low.length ? low[low.length - 1] : 'unknown'}, lowest ${low.length ? Math.min(...low) : 'unknown'}. Dashed line: the two-bot alert level.`);
+  return svg;
+}
+
+function render() {
+  const root = document.getElementById('root');
+  if (!v) { mount(root, h('div', { class: 'k-empty' }, 'Loading…')); return; }
+  const [cls, word] = WORD[v.status] || ['run', v.status];
+  const late = v.next && Date.now() > v.next;
+  const lowest = v.points.filter(p => p[1] !== null).map(p => p[1]);
+  mount(root,
+    h('div', { class: 'k-card' },
+      h('div', { class: 'row' }, h('span', { class: 'k-dot ' + cls }), h('span', { class: 'big' }, word), h('span', { class: 'dim' }, '· round ' + v.round),
+        h('span', { class: 'dim' }, '· ' + (v.next ? (late ? 'next round was due ' + hhmm(v.next) : 'next round ' + hhmm(v.next)) : 'next round not set'))),
+      h('div', { class: 'wrapt', style: 'margin-top:6px' }, v.last ? h('span', {}, h('span', { class: 'dim' }, hhmm(v.last.t) + '  '), v.last.summary) : h('span', { class: 'dim' }, 'No round reported yet.')),
+      v.paused ? h('div', { class: 'dim', style: 'margin-top:6px' }, 'Paused: Claude keeps reading the numbers but does not change or deploy the bot. The bot alert stays on.') : null,
+      h('div', { class: 'row', style: 'margin-top:6px' },
+        h('span', { class: 'k-dot ' + (v.watcher.alive ? 'ok' : 'bad') }),
+        h('span', { class: 'ell' }, v.watcher.alive ? 'Bot watcher running, checked ' + ago(v.watcher.lastCheck) : 'Bot watcher NOT running' + (v.watcher.lastCheck ? ' (last check ' + ago(v.watcher.lastCheck) + ')' : '')),
+        v.watcher.alive && !v.watcher.labOk ? h('span', { class: 'k-pill bad' }, 'Lab not answering') : null)),
+    h('div', { class: 'stat' },
+      h('div', { class: 'k-stat' }, h('b', {}, v.n === null ? '?' : String(v.n)), h('span', {}, 'bots in the game')),
+      h('div', { class: 'k-stat' }, h('b', {}, String(v.tabs)), h('span', {}, 'bot tabs connected')),
+      h('div', { class: 'k-stat' }, h('b', {}, lowest.length ? String(Math.min(...lowest)) : '?'), h('span', {}, 'lowest in 12 h'))),
+    h('div', { class: 'k-card' },
+      h('div', { class: 'dim' }, 'Bots in the game, last 12 hours (dashed: the 2-bot alert line; amber: Lab not answering)'),
+      graph(v.points),
+      h('div', { class: 'axis dim' }, h('span', {}, hhmm(Date.now() - 12 * 3600e3)), h('span', {}, hhmm(Date.now() - 6 * 3600e3)), h('span', {}, 'now'))),
+    h('div', { class: 'btns' },
+      h('button', { class: v.paused ? 'primary' : '', onclick: async () => { await prism.call('pause', { on: !v.paused }); load(); } }, v.paused ? 'Resume' : 'Pause'),
+      h('button', { class: 'primary', onclick: async () => { await prism.call('runRound', {}); window.kit.toast('Asked Claude to run a round'); } }, 'Run a round now')),
+    h('div', { class: 'k-card' },
+      h('div', { class: 'dim' }, 'Alerts'),
+      v.alerts.length ? v.alerts.map(a => h('div', { class: 'item' }, h('span', { class: 'when' }, hhmm(a.t)), h('span', { class: 'what' }, a.text))) : h('div', { class: 'dim', style: 'padding:4px 0' }, 'None so far.')),
+    h('div', { class: 'k-card' },
+      h('div', { class: 'dim' }, 'Rounds'),
+      v.rounds.length ? v.rounds.map(r => h('div', { class: 'item' }, h('span', { class: 'when' }, hhmm(r.t)), h('span', { class: 'what' }, h('b', {}, '#' + r.n + ' '), r.summary))) : h('div', { class: 'dim', style: 'padding:4px 0' }, 'None reported yet.')),
+    h('div', { class: 'dim', style: 'font-size:12px' }, 'Runs until ' + new Date(v.deadline).toLocaleString([], { weekday: 'long', hour: '2-digit', minute: '2-digit' }) + '.')
+  );
+}
+async function load() { v = await prism.call('state', {}); render(); }
+prism.ready(() => { load(); prism.on('state', d => { v = d; render(); }); setInterval(render, 30000); });
+</script>
+</body>
+</html>

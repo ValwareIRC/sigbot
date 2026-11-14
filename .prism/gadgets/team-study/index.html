@@ -1,0 +1,80 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="prism-gadget://_sdk/base.css">
+<link rel="stylesheet" href="prism-gadget://_sdk/kit.css">
+<script src="prism-gadget://_sdk/prism.js"></script>
+<script src="prism-gadget://_sdk/kit.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box }
+html, body { height: 100%; margin: 0 }
+.k-body { overflow: auto; min-height: 0 }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; min-width: 0 }
+.k-grow { flex: 1; min-width: 0 }
+.scroll { overflow-x: auto; max-width: 100% }
+table { border-collapse: collapse; width: 100%; font-size: 13px; font-variant-numeric: tabular-nums }
+th, td { padding: 5px 8px; text-align: right; white-space: nowrap; border-bottom: 1px solid #ffffff12 }
+th:first-child, td:first-child { text-align: left }
+th { font-weight: 500; opacity: .7; font-size: 12px }
+tr.ours td { color: var(--amber) }
+td.name { max-width: 260px; overflow: hidden; text-overflow: ellipsis }
+.tag { font-size: 11px; padding: 1px 6px; border-radius: 8px; background: #ffffff14; margin-left: 6px }
+.tag.ours { background: color-mix(in srgb, var(--amber) 25%, transparent) }
+.note { font-size: 13px; opacity: .8; margin: 4px 0 10px }
+.h { font-size: 12px; opacity: .65; margin: 14px 0 6px }
+.better { color: var(--mint) } .worse { color: var(--rose) }
+.runs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px }
+.runs button.on { outline: 2px solid var(--accent) }
+</style></head>
+<body>
+<div class="k-app">
+  <div class="k-top"><div class="k-title">Team study runs</div><div class="k-grow dim" id="sub"></div><button id="go">Run study now</button></div>
+  <div class="k-body" id="body"><div class="k-empty">Loading…</div></div>
+</div>
+<script>
+const { h, mount } = window.kit;
+let runs = [], pick = null;
+const v = x => x === null || x === undefined ? '–' : x;
+const time = s => new Date(s).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+// across runs: medians, wild vs ours; speed and handoffs higher is better for us
+function compare() {
+  const cols = [['Run', r => 'Run ' + r.id + ' · ' + time(r.at)], ['Teams', r => r.sum.wild.n + ' / ' + r.sum.ours.n],
+    ['Speed vs one cell', r => cell(r.sum.ours.speed, r.sum.wild.speed, 'x')], ['Handoffs / min', r => cell(r.sum.ours.handoffs, r.sum.wild.handoffs)],
+    ['% forward', r => cell(r.sum.ours.fwdShare, r.sum.wild.fwdShare)], ['Spacing', r => v(r.sum.ours.spacing) + ' / ' + v(r.sum.wild.spacing)],
+    ['Size ratio', r => v(r.sum.ours.ratio) + ' / ' + v(r.sum.wild.ratio)], ['Pours', r => r.sum.ours.pours + ' / ' + r.sum.wild.pours],
+    ['Kills', r => r.sum.ours.kills + ' / ' + r.sum.wild.kills], ['Ours killed by teams', r => String(r.sum.wild.killsOfOurs)]];
+  return h('div', { class: 'scroll' }, h('table', {}, h('thead', {}, h('tr', {}, ...cols.map(c => h('th', {}, c[0])))),
+    h('tbody', {}, ...runs.slice().reverse().map(r => h('tr', { style: 'cursor:pointer', onclick: () => { pick = r.id; render(); } }, ...cols.map(c => h('td', {}, c[1](r))))))));
+}
+function cell(ours, wild, pre = '') {
+  const s = h('span', {}, (ours === null ? '–' : pre + ours) + ' / ' + (wild === null ? '–' : pre + wild));
+  if (ours !== null && wild !== null) s.className = ours >= wild ? 'better' : 'worse';
+  return s;
+}
+function teamTable(r) {
+  const ts = r.teams.filter(t => t.seenSec >= 10).sort((a, b) => (b.ours - a.ours) || (b.seenSec - a.seenSec));
+  if (!ts.length) return h('div', { class: 'k-empty' }, 'No team was in view for 10 s or more in this run.');
+  const head = ['Team', 'Seen', 'Spacing', 'Ratio', 'Handoffs/min', 'Fwd / back / side', 'Pours', 'Kills', 'Speed'];
+  return h('div', { class: 'scroll' }, h('table', {}, h('thead', {}, h('tr', {}, ...head.map(x => h('th', {}, x)))),
+    h('tbody', {}, ...ts.map(t => h('tr', { class: t.ours ? 'ours' : '' },
+      h('td', { class: 'name', title: t.team }, t.team, h('span', { class: 'tag' + (t.ours ? ' ours' : '') }, t.ours ? 'OURS' : 'wild')),
+      h('td', {}, t.seenSec + ' s'), h('td', {}, v(t.spacing)), h('td', {}, v(t.ratio)), h('td', {}, v(t.handoffsPerMin)),
+      h('td', {}, `${t.dir.forward} / ${t.dir.back} / ${t.dir.side}`), h('td', {}, String(t.pours)),
+      h('td', {}, t.kills + (t.killsOfOurs ? ` (${t.killsOfOurs} ours)` : '')), h('td', {}, t.speedVsSingle === null ? '–' : 'x' + t.speedVsSingle))))));
+}
+function render() {
+  const body = document.getElementById('body');
+  document.getElementById('sub').textContent = runs.length ? `${runs.length} run${runs.length > 1 ? 's' : ''} · latest ${time(runs[runs.length - 1].at)} · ours / wild` : 'Scheduled runs at 17:46, 18:31, 19:16, 20:01, 20:46, 21:31, 22:16, 23:01';
+  if (!runs.length) return mount(body, h('div', { class: 'k-empty' }, 'No runs yet. The first scheduled run is at 17:46, or press Run study now.'));
+  const r = runs.find(x => x.id === pick) || runs[runs.length - 1];
+  mount(body,
+    h('div', { class: 'h' }, 'Across runs (ours / wild teams, medians; green = ours at least as good)'), compare(),
+    h('div', { class: 'h' }, 'Teams in run ' + r.id + ' · ' + time(r.at) + ' · ' + r.minutes + ' min of observations · ' + r.snaps + ' snapshots'),
+    h('div', { class: 'runs' }, ...runs.map(x => h('button', { class: x.id === r.id ? 'on' : '', onclick: () => { pick = x.id; render(); } }, 'Run ' + x.id))),
+    r.note ? h('div', { class: 'note' }, 'Changed: ' + r.note) : null,
+    teamTable(r));
+}
+document.getElementById('go').onclick = async e => { const b = e.target; b.disabled = true; b.textContent = 'Studying…'; const r = await prism.call('run', { minutes: 50 }); b.disabled = false; b.textContent = 'Run study now'; if (r && r.error) kit.toast(r.error); };
+prism.on('runs', d => { runs = d.runs; render(); });
+prism.ready(async () => { runs = (await prism.call('list')).runs; render(); });
+</script>
+</body></html>

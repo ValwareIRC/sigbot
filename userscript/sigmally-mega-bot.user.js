@@ -1,21 +1,21 @@
 // ==UserScript==
 // @name         Sigmally Mega Bot
-// @namespace    https://github.com/ValwareIRC/sigbot
-// @version      3.54.5
+// @namespace    sighack
+// @version      3.64.0
 // @description  Autopilot for one.sigmally.com: farms, hunts, dodges, smart-splits (teamers first), flanks, shoots viruses, baits bots, intercepts teamers, multiboxes as a squad. Replaces "Sigmally Smart Split".
 // @match        https://one.sigmally.com/*
 // @match        https://*.sigmally.com/*
 // @run-at       document-start
 // @grant        none
-// @updateURL    https://raw.githubusercontent.com/ValwareIRC/sigbot/main/userscript/sigmally-mega-bot.user.js
-// @downloadURL  https://raw.githubusercontent.com/ValwareIRC/sigbot/main/userscript/sigmally-mega-bot.user.js
+// @updateURL    http://127.0.0.1:47800/sigmally-mega-bot.user.js
+// @downloadURL  http://127.0.0.1:47800/sigmally-mega-bot.user.js
 // ==/UserScript==
 
 (function () {
     'use strict';
 
     const W = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-    const VERSION = '3.54.5';
+    const VERSION = '3.64.0';
     // Hot swap: a newer copy injected with __megaHandoff set takes over the running one (its live game
     // connection and state) instead of bowing out, so updates need no reload (and no captcha).
     const prevBot = W.__megaHandoff ? W.megaBot : null;
@@ -109,7 +109,7 @@
         consolidate: true,      // when in many pieces and safe, feed them all into the biggest one
         consolidateMinCells: 4,
         consolidateDoneShare: 0.8, // stop once the biggest piece holds this share of my mass
-        dashFeed: true,         // when chased with a clear path ahead, shoot mass forward: lighter = faster
+        dashFeed: false,        // (3.60.5 off, the user: it threw mass into empty space and the chaser ate it)         // when chased with a clear path ahead, shoot mass forward: lighter = faster
         dashMinMass: 2000,      // ...but only once we're this big (below it, shooting costs more than it gains)
         dashMinMassFrac: 0.55,  // stop shooting once this much of my mass is still in my body
         dashMaxMs: 4000,
@@ -166,6 +166,7 @@
         backShotEveryMs: 40,    // the player's A key: a backward shot every tick - live takes a press every tick (was 80 from the local server code's 2-tick rule). Extra
                                 // presses in between are DROPPED, not queued (live test 2026-10-17). 80: ~11 shots/s, about standing still;
                                 // 200: 5/s, still moving at ~45%. Each piece shoots its own blob per shot, so more pieces = more blobs.
+        instantFeed: true,      // the player's SigMod rapid-feed key (Q) shoots one blob the moment it's pressed, not only after a hold
         mineMacroEveryMs: 20,   // the player's hold-E mining macro: TWO W presses a tick - the server shoots at most once a tick and drops extras, so this never misses a tick (one a tick drifted against the server clock and lost shots)
         backShotHoldMs: 45,     // ...and the mouse stays on the shot point this long (a tick; 30 sent some the wrong way)
         guardian: false,        // the player's screen: the bot takes the wheel for a moment when the player heads into death (K)
@@ -202,6 +203,126 @@
         teamEvenOut: false,     // calm: the bigger bot feeds the smaller until level (off: let mass concentrate)
         mineKeepFrac: 0.8,      // ...once mining, keep at it down to this share of mineMinMass
         mineKeepMass: 2000,     // ...keep mining down to this (the user: 2000 is the hard floor, 2300 the safe start)
+        mineHarvest: true,      // ...the viruses our shots make are ours: go and eat them (never leave them on the field)
+        teamPop: true,          // virus shots: popping a player is also worth it when a teammate near it can eat the pieces
+        teamPopRange: 2000,
+        minePop: true,          // ...a player in launch range of a virus we can shoot through: pop it (the user: attack, don't run)
+        minePopNeedFood: true,  // ...only players whose popped pieces our biggest piece can eat
+        minePopMinMass: 800,    // ...a player worth less than this (and than minePopMinFrac of our mass) is not worth our shots, unless it can eat us
+        minePopMinFrac: 0.25,
+        minePopSafe: 150,       // ...and that shooter this far outside the player's single-split reach
+        minePopMs: 700,         // ...one try lasts this long
+        minePopHoldMs: 1200,    // ...then mining goes on this long before the next
+        minePopRange: 650,      // ...our shooter this close to that virus (edge to edge)
+        mineAway: true,         // ...someone who can eat our pieces inside its split reach: mine on the far side / walk the field away
+        mineAwayGap: 700,       // ...from this far outside its reach
+        mineAwayWalk: true,     // ...nothing safe to mine: true = walk the field away ourselves (sim: 15/16 survive a 22k hunter, 11/16 with normal steering)
+        mineAwayWall: 1400,     // ...never on a heading that ends this close to the border
+        mineAwayClosing: 2,     // ...only if it is coming at us at least this fast (units a tick), or was a moment ago
+        mineAwayHard: 1100,     // ...or its edge is this close, moving or not
+        mineAwayLookTicks: 0,   // ...plus this many ticks of its closing speed (sim: 0 survived 16/16, 50 only 13/16 - it ran too early)
+        crew: true,             // (3.59.0) our bots work as a mining crew: gather into one, launch it, seed the others, keep level
+        crewKeep: 125,          // ...a feeder keeps this much (a cell under 100 cannot shoot)
+        crewFeedAt: 190,        // ...and starts giving once it has this much
+        crewSpreadAt: 8000,     // ...a miner with this much seeds a small teammate
+        crewSeedTo: 2700,       // ...up to this (just over the mining line: the rest it eats off the first miner's field)
+        crewSeedBurstMs: 5000,  // ...in bursts this long
+        crewDeliverRange: 3000, // ...to a teammate within this of our middle (we walk to it, it walks to us)
+        crewLevelRange: 2400,   // ...and levelling with a miner within this
+        crewLevelBurstMs: 1500, // ...and levelling bursts this long
+        crewRestMs: 2000,       // ...with this much mining in between
+        crewFieldRange: 2600,   // ...a smaller miner works within this of the biggest one (its field is full of spare viruses)
+        crewPourAt: 1.06,       // ...the gather: pour once the bots that are close weigh this x the mining line together
+        crewPourRange: 2200,    // ...close = within this of the biggest
+        crewGraze: 1100,        // ...and once meeting they close to within this of it
+        crewMeetAt: 1.2,        // ...they meet once the whole team weighs this x the mining line (the walk costs ~1% a second)
+        crewMeetOff: 1.05,      // ...and go back to grazing apart if it falls under this
+        crewApartMin: 1600,     // ...grazing apart: at least this far from a teammate (one patch feeds one bot)
+        crewApartMax: 5000,     // ...and at most this far from the biggest (the meeting must take seconds)
+        crewLevelStart: 2.2,    // ...a miner this many times a teammate miner shoots mass across to it (each miner earns its own: only one far behind gets a top-up)
+        crewLevelStop: 1.5,     // ...until it is down to this many times
+        crewSeedFrac: 0.22,     // ...a seed is this share of the giver's mass when that is more than crewSeedTo
+        crewSeedMax: 8000,      // ...up to this
+        crewKeepOut: 350,
+        splitRun: true,         // (3.59.4) two calm bots close together travel as one body by splitting into each other
+        srRange: 1800,          // ...partner within this (centres)
+        srMinTeam: 1200,        // ...the two weigh at least this together
+        srMinEach: 250,         // ...and each at least this
+        srEveryMs: 450,         // ...the body splits at most this often
+        srAhead: 520,           // ...the runner waits this far past the body's front edge
+        srGiveMs: 1600,         // ...after a split the body's flown pieces are the runner's to eat this long
+        srStallMs: 3500,        // ...no workable split for this long: rest
+        srRestMs: 12000,        // ...this long (pieces merge after 30 s; the crew grazes meanwhile)
+        srClear: 1300,          // ...no stranger that could eat a flying piece within this of where they land
+        virusGun: true,         // (3.59.3) virus launches at players by the rules agreed with the user (replaces minePop and the old virus shot)
+        gunAgainMs: 30000,      // ...one virus per player, then none at it for this long (its pieces are locked apart that long)
+        gunRange: 320,          // ...our shooter's edge at most this far from the virus's middle (shots stray 17 degrees)
+        gunStandoff: 150,       // ...and never closer than this to it (a shot walks us a step toward the mouse)
+        gunHitDef: 0.4,         // ...least chance the launched virus lands in the target: defence...
+        gunHitFood: 0.6,        // ...and food
+        gunCostMin: 60,         // ...presses may cost this much (every piece of 100+ shoots 10 a press)...
+        gunCostDef: 0.1,        // ...or this share of our mass for defence...
+        gunCostFood: 0.03,      // ...and this for food
+        gunDefGap: 500,         // ...defence: the hunter is within its split reach of the piece plus this...
+        gunDefFar: 1500,        // ...or coming at it from within this beyond its reach
+        gunFoodMin: 150,        // ...food: the piece one of ours can split onto afterwards is worth at least this
+        gunFoodSlack: 250,      // ...and that one of ours is within its split reach plus this of the target
+        gunHold: true,          // ...a bot with a reason to stay (mining, at the bank) takes the firing spot behind a virus when a hunter comes, instead of running at once
+        gunHoldAlways: false,   // ...(off) every bot does, not only one that is mining, at the bank, or already sheltering behind a virus
+        gunHoldReach: 650,      // ...if that spot is within this of it
+        gunHoldGap: 250,        // ...and gives it up (runs) once the hunter is within its split reach plus this with no launch possible
+        gunPathStray: 260,      // the launch path: a new virus lands up to this far either side at full range (shots stray 17 degrees)
+        gunPrime: true,         // ...loaded guns: with a threat in view the virus between us and it is fed to 4 hits ahead of time
+        gunPrimeView: 3500,
+        gunPrimeMinMass: 600,
+        crewBankAt: 450,        // (3.59.3) the bank: a whole bot with this much shoots what it can spare into the team's virus...
+        crewBankKeep: 250,      // ...down to this
+        crewBankRange: 4500,    // ...if the bank is this close (and the trip is worth it: 1 mass to spare per 12 units)
+        crewBankPickRange: 3500, // ...the biggest bot sets the bank up at a virus within this of itself
+        crewDiveMinMass: 300,   // (3.60.8) a bot under this never walks into the biggest to finish a pour: it shoots (lossless) and stays alive (live: 34 of 177 merges in 30 min, median 182 mass)
+        crewDiveEveryMs: 45000, // a bot walks into the biggest to finish a pour at most this often (else it only shoots, and lives)
+        crewBankFrom: 0.85,     // ...once it has this share of the mining line (or is being poured into): the bank is for the launch, not for saving
+        crewBankMaxMs: 45000,   // ...a bank nobody popped into for this long is given up
+        crewBankWaitMs: 6000,   // ...the one that pops waits this long at most for teammates still shooting into the bank
+        crewBankSeedMin: 600,
+        crewBankPileR: 950,     // ...viruses within this of where the new ones land are the pile
+        crewBankSlot: 0.5,      // ...the two shooters stand this far (radians) either side of the line (never on top of each other)
+        crewBankWait: 1500,     // ...the one that will pop waits this far behind the shooting side
+        crewBankGo: 25,         // ...with this many banked, a pour to lift it over the line goes ahead at once
+        crewBankSeedNear: 0.75, // ...a biggest bot under this share of the line gets the pour first (it would take too long alone)
+        crewFeast: true,        // (the user, 2026-11-13: allowed) beside a teammate miner with this many viruses in reach, a small bot eats them below the mining line (everywhere else 2,300 stands)
+        crewFeastViruses: 12,
+        crewFeastMin: 400,      // ...from this mass
+        crewFeastRange: 5000,   // ...with that miner this close
+        minePile: true,         // (3.59.1) still one whole cell: stand off the first virus and shoot it down to the floor before popping (the pile is waiting when we pop)
+        minePileIn: 150,        // ...step back when our edge is this close to its middle
+        minePileOut: 330,       // ...and walk in again (firing) from here
+        mineBankAt: 8,          // a young miner with this many of its own viruses in view eats them before shooting more...
+        mineBankTo: 2,          // ...down to this many
+        mineHeadBelow: 6000,    // a miner under this keeps a heavy head: its biggest piece holds...
+        mineHeadShare: 0.5,     // ...this share of its mass (the other pieces shoot into it), so one piece can always eat what we make
+        crewBandIn: 380,        // a receiver stands this far (edge to edge) from the giver's nearest piece that could eat it...
+        crewBandOut: 540,       // ...to this far: the shots come to it
+        crewTopUpFrac: 0.3,     // a miner under this share of our biggest miner walks over to it for a top-up       // ...kept clear round a teammate's pieces when either side could eat the other
+        crewLevelMin: 5000,     // ...but only a miner with at least this much gives
+        crewReach: 780,         // ...shots count from this close (our edge to its middle; blobs fly ~840)
+        crewGapIn: 240,         // ...closer than this (edge to edge): back off, no shot
+        crewGapOut: 430,        // ...and come in again from here
+        crewClear: 600,         // ...a helper keeps this far from a miner's nearest piece (its viruses land around it)
+        crewLeash: 1700,        // ...feeders graze within this of the bot they feed
+        crewTogether: 5200,     // ...miners further than this from the others work their way back
+        mineSeek: true,         // ...nothing in reach: walk to the nearest virus any of us can see
+        mineSeekRange: 40000,   // (3.59.0: anywhere on the map)
+        mineWallShy: 2500,      // ...a virus this close to the border counts as further away (the lane ran into the wall and the field died there)
+        mineWallShyK: 1.5,      // ...by this much per unit
+        mineSweepFrac: 0.04,    // ...missed blobs are only worth a sweep when they hold this share of our mass (else walk on to the next virus)
+        mineChain: true,        // (3.59.0: on - the engine never stops firing) ...and while only a few lie around, keep firing into the one we are walking onto (it launches more ahead)
+        mineChainRange: 450,    // ...from this close (edge of our nearest eater to it)
+        mineHarvestAt: 100000,  // ...stop shooting and eat them once this many are in view (off: in the sim stopping to collect lost half the growth)
+        mineHarvestTo: 8,       // ...back to shooting when this few are left
+        mineHarvestMinMass: 1500, // ...under the floor only at the piece limit or with at least this much
+        mineBackRange: 0,       // (3.59.0: off - it walked back for viruses that were gone while the mass decayed) ...and we go back for ones this far away
+        mineOursMs: 240000,     // ...a virus we made stays ours this long
         mineRange: 2600,        // ...viruses this far count as the field
         mineShotEveryTicks: 1,  // ...fire every tick while mining: the server's max (the user: 5 shots = 50 mass make a 100-mass virus, shooting is investment)
         virusOursMs: 4000,      // the user (2026-10-21): never eat a virus we are not shooting - one we pressed W at this recently counts
@@ -210,6 +331,7 @@
         slipMinFrac: 0.02,      // ...worth at least this share of our mass
         slipMargin: 15,         // ...kept clear of every eat line on top of their movement in our lag
         slipMaxMs: 3000,
+        slipOthersGap: 400,     // ...nobody else who could eat the lead within their reach plus this of it or the prey
         slipBanMs: 20000,       // ...a player we found no safe lane past: left alone this long
         slipReactTicks: 0,      // ...ticks we assume a human takes to turn onto us in the lane. 0 = worst case: live (2026-10-25) a third of real deaths were slips the target turned on; 8 still lost them in the sim once the lane took 30+ ticks        // (was 5000: lingering in a lane let them react)
         slipFeed: true,         // ...our other pieces shoot into the lead on the way when most blobs would land in it
@@ -227,12 +349,16 @@
         lockstepWall: true,     // pack: run level beside a teammate that is chasing something, eat lines overlapping
         lockstepWeight: 0.8,    // ...pull (x the prey's mass)
         crossfire: true,        // pack: join a teammate's virus shot on the same line
+        mineLaneClear: 120,     // mining: no virus with another player this close to the line from us to it (edge)...
+        mineVirusClear: 250,    // ...or this close to the virus itself (edge to edge)
         mineAimMin: 400,        // mining: only viruses at least this clear of every cell of ours and of our mass centre (the user: it aimed at ones too close)
         mineFlowPast: 300,      // ...aim this far past the virus once a piece is at it: keep moving (the user: stopping beside it got us eaten)
         mineParkMs: 1000,
         mineSweepIdleMs: 3000,  // ...sweeping our missed blobs: give up after this long without collecting one       // ...at the target this long without eating it: drop it and move on
         splitMaxEdge: 900,      // smart split: no target further than this (edge to edge) unless it stands still (live: 50% landed beyond)
         escapeSplitBigRatio: 2.5, // escape split only if a player this many times our piece's mass overlaps it, or its split is flying at us
+        rundown: true,          // a known teamer closing in on us: drop the pulls that aren't getting away
+        rundownGap: 1500,       // ...from this far outside its split reach
         mineMinMass: 2300,      // the user: viruses are food only from this mass up (then mine relentlessly); below, avoid them
         virusFarmMinMass: 800,  // (arena 2026-10-20: 800 beat 1500 - team top 3918 vs 3276)
         virusFarmPieceMargin: 500,   // (arena: 500 beat 900, team top 2735 vs 2331) ...off while something that could eat one of our pieces is this close (edge)
@@ -268,7 +394,7 @@
 
         // masters: anyone whose name contains one of these gets all our mass (never attacked, never fled)
         serveMaster: true,
-        masters: [],
+        masters: ['YOM', '刘子儒'],
 
         // squad (multiboxing): our own players in other tabs / connections are one team
         multibox: true,
@@ -340,6 +466,15 @@
         pairSweep: 1.6,         // ...and this many split lengths from where the pieces land (it sweeps them up)
         pairKeepClear: 160,     // ...our cells that could eat the partner's main cell keep at least this much clear of its eat line
         pairMaxK: 2,            // ...at most this many splits per handoff (more leaves the giver too small for the next one)
+        teamDiveMinMass: 400,   // (3.60.7) emergency dive / escape split into a teammate only for a bot this big (live: 389 merges in 50 min, a respawn a minute per bot, mostly ~150-mass bots)
+        rescueJump: true,       // (3.61.8) jump whole into a teammate about to be caught when our mass makes it too big for the hunter
+        emergencyDive: true,    // (3.60.2) about to be eaten by a stranger, a teammate that can take us is closer in time: dive into it
+        shotGuard: true,        // (3.60.3) a W press is held when strangers would get our blobs (traced per shooting piece)
+        unstick: true,          // (3.61.5) caught wobbling: commit to the planner's best way for unstickMs, ignoring the moves that took turns
+        unstickMs: 1500,
+        mouthNet: true,         // (3.59.7) every move the bot sends: never carry a piece into a stranger's eat line (it bends the aim)
+        mouthNetTicks: 10,      // ...looking this many ticks of walking ahead
+        mouthNetMargin: 70,     // ...with this much room
         mateGuard: true,        // bots never steer a cell that could eat a teammate's main cell into it (unless it's diving / feeding in)
         mateGuardClear: 220,    // ...keeping at least this much clear of the eat line
         observe: true,          // every bot logs the big players it sees (3/s) for the Lab's study of the server's teams
@@ -375,13 +510,19 @@
         weaveSplitsPerTurn: 2,  // ...splits across per turn (0.18 s apart) // the stepper's forward splits: one about every half second along the curve
         relayTravelMinMass: 350, // DNA travel only once both are this big (smaller cells move faster on their own)
         helpDangerRatio: 1.3,   // go to help a teammate unless our own danger is this much worse than its
+        teamPotential: true,    // a player with a teammate beside it counts at its size after the teammate pours in (81% of big-bot deaths)
+        potentialRange: 900,    // ...the teammate this close (edge to edge)
+        potentialMin: 0.2,      // ...and bringing at least this share of its mass
+        potentialShare: 1,      // ...how much of the teammate's mass we count
         crown: true,            // the team together beats leaderboard #1 (as last seen): everyone merges into our biggest
         crownMargin: 1.1,       // ...by this much
         crownMinMass: 4000,     // ...and the team has at least this much
         crownSeenMs: 180000,    // ...#1's mass seen by one of us within this
         crownRange: 5000,       // ...counting teammates this close to the biggest
         crownMs: 25000,         // ...the merge-up gets this long
-        boostMate: true,        // split into a teammate's piece that is in an even fight, so it wins
+        boostMate: false,       // (3.64.0 off: 413 tries, 4.2k killed / 39.5k lost live) split into a teammate's piece that is in an even fight, so it wins
+        askBoostKill: false,    // (3.64.0 off: 381 tries, 32.6k killed / 141.8k lost live) ask a teammate to feed us for a split-kill
+        feedSplitKill: false,   // (3.64.0 off: 151 tries, 94 killed / 6.0k lost live) split our half into a teammate beside its prey
         boostMateFightGap: 250, // ...the stranger this close to its piece (edges)
         boostMateGapMs: 700,    // ...at most one boost split per this long
         snackBreak: true,       // a stranger we can eat close by: fast travel / pairing step aside so we eat it
@@ -428,6 +569,10 @@
         teamBalanceBelow: 0.25, // calm: feed the smaller one when it has under this share of the team's mass (up to ~a third)
         teamBalanceAt: 2.2,     // calm: once one of us has this many times the other's mass, it feeds the other until we're level
         squadNearWeight: 3,     // support: pull to stay within feeding range of the leader
+        packs: true, packKeep: 150, packFeedRange: 2500, packLeash: 1400, packDiveDanger: 0.2, packMainSwitch: 1.25,   // (3.63.0) two packs: a main and its feeders
+        popSafe: true, popSafeRange: 2200, popSafeMinFrac: 0.5,   // (3.63.1) no popping from few pieces with a big stranger near
+        mineYieldWhole: true,   // (3.62.0) a whole (1-2 piece) miner in the escape state runs instead of mining
+        runIntoMate: true, runIntoRange: 5000, runIntoWeight: 1.2,   // (3.61.9) chased: run to the nearest teammate that can swallow us
         squadRunWeight: 0.6,    // support, when chased: pull toward a mate that can eat the chaser (x my mass)
         squadDefendWeight: 1.5, // leader: pull onto whatever is chasing a mate (x herdWeight x its mass)
         squadHerdWeight: 1.2,   // support: get behind the leader's prey so it runs into the leader
@@ -667,7 +812,10 @@
     };
 
     // Masters: matched anywhere in the name, case-sensitively ('YOM', not 'yom'). Anyone can type these names.
-    const isMaster = c => CFG.serveMaster && !!c.name && CFG.masters.some(n => n && c.name.includes(n));
+    // (3.60.1) a name one of our own tabs plays under is never a master: our bots are called YOM YOM and 'YOM' is on the
+    // masters list, so with serveMaster on (old Opera profiles) big bots chased each other to give their mass away
+    const ownName = n => { try { if (squad.knownNames.has(n)) return true; for (const c of conns.values()) if (c.myName === n) return true; } catch (_) { } return false; };
+    const isMaster = c => CFG.serveMaster && !!c.name && CFG.masters.some(n => n && c.name.includes(n)) && !ownName(c.name);
 
     // ---------------------------------------------------------------- teamer tracking
     // Owners are identified by name + colour (the protocol carries no owner id).
@@ -844,6 +992,13 @@
             if (Array.isArray(m.killers)) for (const [n, kt] of m.killers) noteKiller(n, kt);
             if (Array.isArray(m.seenTop)) for (const [n, ms, st] of m.seenTop) { const cur = nameSeen.get(n); if (!cur || cur.t < st) nameSeen.set(n, { m: ms, t: st }); }
             if (Array.isArray(m.tagPos)) for (const [n, x, y, ms, pt, sv] of m.tagPos) { const cur = tagPos.get(n); if (!cur || cur.t < pt) tagPos.set(n, { x, y, mass: ms, t: pt, server: sv || m.server }); }
+            if (Array.isArray(m.gun)) for (const [k, ago, res, proof] of m.gun) { const cur = gunLog.get(k), tt = now() - ago; if (!cur || cur.t < tt - 200) gunLog.set(k, { t: tt, by: m.from, result: res, proofUntil: proof > 0 ? now() + proof : 0 }); }
+            // the team's bank: everyone keeps the OLDEST one (so it survives whoever set it up), until someone sees it gone
+            if (m.crewBankGone && crewBank && crewBank.t0 === m.crewBankGone) crewBank = null;
+            if (m.crewBank && m.crewBank.t0 && !(crewBankGone && crewBankGone.t0 === m.crewBank.t0 && now() < crewBankGone.until) && [...conns.values()].some(c => serverOf(c.ws) === m.crewBank.server)) {
+                if (!crewBank || m.crewBank.t0 < crewBank.t0) crewBank = Object.assign({}, m.crewBank);
+                else if (crewBank.t0 === m.crewBank.t0) { if ((m.crewBank.nT || 0) > (crewBank.nT || 0)) { crewBank.n = m.crewBank.n; crewBank.nT = m.crewBank.nT; } crewBank.by = crewBank.by || {}; for (const k in (m.crewBank.by || {})) if ((m.crewBank.by[k] || 0) > (crewBank.by[k] || 0)) crewBank.by[k] = m.crewBank.by[k]; }
+            }
             this.members.set(m.from, m);
         },
         publish(conn) {
@@ -889,6 +1044,12 @@
             msg.hunt = conn.huntMsg && now() - conn.huntMsg.at < 700 ? conn.huntMsg.h : null;   // lockstep wall: what we chase
             msg.wp = conn.waypoint ? [Math.round(conn.waypoint.x), Math.round(conn.waypoint.y)] : null;
             msg.mining = !!conn.mining;
+            msg.crew = conn.crewRole || null;
+            msg.crewGiveTo = conn.crewGive && conn.crewGive.to && now() <= conn.crewGive.until ? conn.crewGive.to : null;
+            msg.crewBank = bankFor(conn);
+            msg.sr = conn.sr || null;
+            msg.gun = []; for (const [k, lg] of gunLog) { const ago = now() - lg.t; if (ago < CFG.gunAgainMs) msg.gun.push([k, Math.round(ago), lg.result || '', lg.proofUntil ? Math.round(lg.proofUntil - now()) : 0]); else if (!(lg.proofUntil > now())) gunLog.delete(k); }
+            msg.crewBankGone = crewBankGone && now() < crewBankGone.until ? crewBankGone.t0 : 0;
             msg.relayPhase = conn.relay && conn.relay.active && conn.relay.stepper === conn.memberId ? (conn.relaySplits < (conn.relayK || 1) ? 'split' : 'park') : null;
             if (t - (conn.teamersSent || 0) > 2000) {
                 conn.teamersSent = t;
@@ -1006,6 +1167,7 @@
             this.baiters = new Map();       // owner key -> until when we treat them as baiting us
             this.baiterColors = new Set();
             ws.addEventListener('message', ev => {
+                wireSaw(ws, 'in', ev.data);
                 try { this.onMessage(ev.data); } catch (err) { console.error('[MegaBot]', err); }
             });
             ws.addEventListener('close', ev => {
@@ -1019,8 +1181,9 @@
         raw(buf) { if (this.ws.readyState === 1) nativeSend.call(this.ws, buf); }
         sendMouse(x, y) {
             if (CFG.bot && CFG.mateGuard && CFG.multibox) { const g = this.mateGuard(x, y); x = g.x; y = g.y; }
+            if (CFG.bot && CFG.mouthNet) { try { const g = this.mouthNet(x, y); x = g.x; y = g.y; } catch (_) { } }
             this.lastMouse = { x, y };
-            const dv = new DataView(new ArrayBuffer(13));
+            const dv = this._mdv || (this._mdv = new DataView(new ArrayBuffer(13)));   // (3.60.0) one buffer, reused: send() copies it
             dv.setUint8(0, this.shuf[16]);
             dv.setInt32(1, Math.round(x), true);
             dv.setInt32(5, Math.round(y), true);
@@ -1028,17 +1191,90 @@
         }
         // never roll over a teammate's main cell by accident (live: 1 in 3 bot deaths was a teammate swallowing a
         // freshly respawned or 'beside' bot). A teammate that's diving / feeding / pumping / handing pieces to us is let in.
+        // would walking toward (x, y) carry a piece of ours into a stranger's eat line it is not already inside?
+        mouthNet(x, y) {
+            // (3.60.9) not skipped when we mean to go into a teammate: it only looks at strangers, and the way to a teammate is
+            // exactly where a stranger in between kills us (live: 'closing in to feed', walked into a 2,550 player)
+            const mine = this.myCells(); if (!mine.length) return { x, y };
+            let tot = 0; for (const c of mine) tot += c.s * c.s;
+            const pieces = mine.filter(c => c.s * c.s >= 0.1 * tot);
+            const strangers = []; for (const e of this.cells.values()) if (e.player && !this.mine.has(e.id) && !this.mateKeys.has(e.key) && !isAlly(e)) strangers.push(e);
+            if (!strangers.length) return { x, y };
+            const into = (ux, uy) => {
+                for (const c of pieces) {
+                    const step = Math.min(moveSpeed(c.s) * CFG.mouthNetTicks, Math.hypot(x - c.x, y - c.y));
+                    const px = c.x + ux * step, py = c.y + uy * step;
+                    for (const e of strangers) {
+                        if (!canEat(e.s, c.s)) continue;
+                        const line = e.s - c.s / GAME.eatOverlapDiv + CFG.mouthNetMargin;
+                        const ex = e.x + (e.vx || 0) * CFG.mouthNetTicks * 0.5, ey = e.y + (e.vy || 0) * CFG.mouthNetTicks * 0.5;
+                        if (Math.hypot(c.x - e.x, c.y - e.y) < line) continue;            // already in it: bending won't help, leave it to the escape
+                        if (Math.hypot(px - ex, py - ey) < line) return true;
+                    }
+                }
+                return false;
+            };
+            // the direction of the move, from the middle of our pieces
+            let cx = 0, cy = 0, w = 0; for (const c of mine) { const m = c.s * c.s; cx += c.x * m; cy += c.y * m; w += m; } cx /= w; cy /= w;
+            const L = Math.hypot(x - cx, y - cy); if (L < 1) return { x, y };
+            const base = Math.atan2(y - cy, x - cx);
+            if (!into(Math.cos(base), Math.sin(base))) return { x, y };
+            for (const off of [0.35, -0.35, 0.7, -0.7, 1.05, -1.05, 1.4, -1.4, 1.75, -1.75]) {
+                const a = base + off, ux = Math.cos(a), uy = Math.sin(a);
+                if (!into(ux, uy)) { this.mouthBent = (this.mouthBent || 0) + 1; const R = Math.max(L, 300); return { x: cx + ux * R, y: cy + uy * R }; }
+            }
+            return { x, y };
+        }
+        guardDanger(c, px, py) {
+            let d = 0;
+            for (const e of this.cells.values()) {
+                if (!e.player || this.mine.has(e.id) || this.mateKeys.has(e.key) || isAlly(e) || !canEat(e.s, c.s)) continue;
+                const oc = Math.max(1, (this.owners.get(e.key) || {}).count || 1);
+                const reach = Math.max(e.s - c.s / 3, enemySplitReach(e, c.s, oc));
+                const dist = Math.hypot(e.x - px, e.y - py), lim = reach + 250;
+                if (dist < lim) d += (c.s * c.s / 100) * (1 - dist / lim) * (dist < e.s ? 3 : 1);
+            }
+            return d;
+        }
+        // away from teammate cell k: the safest of a fan of headings (never further into k); null = every way is worse than the move we had
+        guardEscape(c, k, ux, uy, x, y) {
+            // (3.61.0) SLIDE, don't bounce: remove only the part of the move that goes into the teammate and keep the rest, so the
+            // bot glides along the edge. The old version pushed straight away every time, and with a pull toward the teammate
+            // that was in-out-in every tick (the user: two met up, wobbled touching each other, and got eaten).
+            const ax = x - c.x, ay = y - c.y, al = Math.hypot(ax, ay) || 1, L = Math.min(400, al), m = c.s * c.s / 100;
+            const dAt = (dx, dy) => this.guardDanger(c, c.x + dx * 400, c.y + dy * 400) + this.guardDanger(c, c.x + dx * 150, c.y + dy * 150);
+            const orig = this.guardDanger(c, c.x + ax / al * L, c.y + ay / al * L) + this.guardDanger(c, c.x + ax / al * 150, c.y + ay / al * 150);
+            const inward = -(ax * ux + ay * uy);
+            let sx = ax + ux * Math.max(0, inward), sy = ay + uy * Math.max(0, inward), sl = Math.hypot(sx, sy);
+            if (sl < 0.3 * al) {   // aimed straight at it: slide along the edge, on the side we chose last time (no flipping)
+                const side = this.guardSide || (((ax * -uy + ay * ux) >= 0) ? 1 : -1); this.guardSide = side;
+                sx = -uy * side; sy = ux * side; sl = 1;
+            }
+            const cands = [[sx / sl, sy / sl, 0]];
+            const base = Math.atan2(sy, sx), out = Math.atan2(uy, ux);
+            for (const off of [0.45, -0.45, 0.9, -0.9]) cands.push([Math.cos(base + off), Math.sin(base + off), Math.abs(off)]);
+            cands.push([Math.cos(out), Math.sin(out), 1.2]);
+            let best = null;
+            for (const [dx, dy, cost] of cands) {
+                if (dx * ux + dy * uy < -0.05) continue;   // never into it
+                const dng = dAt(dx, dy), score = dng + cost * 0.05 * m;
+                if (!best || score < best.score) best = { score, dng, x: c.x + dx * 400, y: c.y + dy * 400 };
+            }
+            if (!best || best.dng > orig + 0.25 * m) { this.mateGuardYield = (this.mateGuardYield || 0) + 1; return null; }
+            return best;
+        }
         mateGuard(x, y) {
             const mine = this.myCells(); if (!mine.length) return { x, y };
             const t = now();
             for (const m of this.vipGuard ? squad.mates(this).concat([this.vipGuard]) : squad.mates(this)) {
                 if (!m.cells || !m.cells.length || t - m.rx > 1000) continue;
                 if (m.intent && (m.intent.merge || m.intent.feeding)) continue;
-                const giving = !!(m.pump || (m.pair && m.pair.role === 'giver'));
+                const srGive = !!(m.sr && m.sr.give > Date.now() && m.sr.with === this.memberId);
+                const giving = !!(m.pump || (m.pair && m.pair.role === 'giver') || srGive);
                 const live = m.cells.map(r => { const c = this.cells.get(r[0]); return c ? { id: r[0], x: c.x, y: c.y, s: c.s } : { id: r[0], x: r[1], y: r[2], s: r[3] }; });
                 const top = live.reduce((a, c) => (c.s > a.s ? c : a));
                 for (const k of live) {
-                    if (giving ? !(m.pair && m.pair.keep === k.id) : k.s < top.s * 0.95) continue;
+                    if (giving ? !(srGive ? m.sr.keep === k.id : (m.pair && m.pair.keep === k.id)) : (k.s < top.s * 0.95 && !(CFG.crew && m.mining))) continue;
                     for (const c of mine) {
                         if (!canEat(c.s, k.s)) continue;
                         const dx = c.x - k.x, dy = c.y - k.y, d = Math.hypot(dx, dy) || 1;
@@ -1047,9 +1283,10 @@
                         // heading in (the mouse is on its side of us): steer off it, keeping the sideways part of the move
                         const ax = x - c.x, ay = y - c.y, ux = dx / d, uy = dy / d, toward = -(ax * ux + ay * uy);
                         if (toward <= 0 && d > edge - 120) continue;
+                        const esc = this.guardEscape(c, k, ux, uy, x, y);
+                        if (!esc) continue;
                         this.mateGuarded = (this.mateGuarded || 0) + 1;
-                        const sx = ax + ux * Math.max(0, toward), sy = ay + uy * Math.max(0, toward);
-                        return { x: c.x + sx + ux * 400, y: c.y + sy + uy * 400 };
+                        return { x: esc.x, y: esc.y };
                     }
                 }
             }
@@ -1068,9 +1305,10 @@
                             if (d >= edge) continue;
                             const ax = x - c.x, ay = y - c.y, ux = dx / d, uy = dy / d, toward = -(ax * ux + ay * uy);
                             if (toward <= 0 && d > edge - 120) continue;
+                            const esc = this.guardEscape(c, k, ux, uy, x, y);
+                            if (!esc) continue;
                             this.mateGuarded = (this.mateGuarded || 0) + 1; this.mateDodged = (this.mateDodged || 0) + 1;
-                            const sx = ax + ux * Math.max(0, toward), sy = ay + uy * Math.max(0, toward);
-                            return { x: c.x + sx + ux * 400, y: c.y + sy + uy * 400 };
+                            return { x: esc.x, y: esc.y };
                         }
                     }
                 }
@@ -1092,7 +1330,47 @@
             for (let i = 0; i < n; i++) this.raw(b);
             this.pendingSplitAt = now();
         }
-        sendEject() { this.raw(new Uint8Array([this.shuf[21]])); }
+        sendEject() {
+            if (CFG.bot && CFG.shotGuard) { let ok = true; try { ok = this.shotOk(); } catch (_) { } if (!ok) { this.shotsHeld = (this.shotsHeld || 0) + 1; return; } }
+            this.raw(new Uint8Array([this.shuf[21]]));
+        }
+        // where would the blobs of this press go? false = strangers get as many first touches as we do (or a feed can't reach)
+        shotOk() {
+            if (/bait/.test(this.mode || '')) return true;
+            const aim = this.lastMouse; if (!aim) return true;
+            const mine = this.myCells(), shooters = mine.filter(c => c.s >= GAME.minEjectSize);
+            if (!shooters.length) return true;
+            const feeding = /feed|pour|seed|level|bank|top-up|dump|boost|bringing|serv|hand|carry/.test(this.mode || '');
+            const others = [];
+            for (const c of this.cells.values()) {
+                if (this.mine.has(c.id)) continue;
+                if (c.virus) others.push({ c, kind: 'virus' });
+                else if (c.player) others.push({ c, kind: this.mateKeys.has(c.key) || isAlly(c) ? 'mate' : 'stranger' });
+            }
+            let bad = 0, good = 0, mateNear = false;
+            for (const p of shooters) {
+                const dx = aim.x - p.x, dy = aim.y - p.y, dl = Math.hypot(dx, dy);
+                const ux = dl < 1 ? 1 : dx / dl, uy = dl < 1 ? 0 : dy / dl, from = p.s, to = p.s + 860;
+                let first = null, ft = Infinity;
+                for (const o of others) {
+                    const ox = o.c.x - p.x, oy = o.c.y - p.y, along = ox * ux + oy * uy;
+                    if (along < from - o.c.s || along > to + o.c.s) continue;
+                    const side = Math.abs(ox * uy - oy * ux);
+                    if (side > o.c.s + 40 + along * 0.15) continue;           // (shots stray up to 17 degrees: ~0.3 wide, half of it)
+                    const at = along - Math.sqrt(Math.max(0, (o.c.s + 20) ** 2 - side * side));
+                    if (at < ft) { ft = at; first = o; }
+                }
+                // our own pieces in the way take the blob first (that is fine: it is still ours)
+                for (const q of mine) { if (q === p) continue; const ox = q.x - p.x, oy = q.y - p.y, along = ox * ux + oy * uy; if (along < from - q.s || along > Math.min(to, ft) + q.s) continue; if (Math.abs(ox * uy - oy * ux) < q.s) { first = { kind: 'own' }; break; } }
+                if (first && first.kind === 'stranger') bad++; else if (first) good++;
+                if (first && first.kind === 'mate') mateNear = true;
+            }
+            if (bad && bad >= good) return false;
+            // (3.60.5) blobs that hit nothing are gifts to whoever comes next: only on purpose at a virus
+            if (good + bad < shooters.length * 0.5 && !/mining|pile|bank|virus|gun|launch/.test(this.mode || '')) return false;
+            if (feeding && !mateNear && !/bank|level|seed/.test(this.mode || '') && !others.some(o => o.kind === 'mate' && shooters.some(p => Math.hypot(o.c.x - p.x, o.c.y - p.y) - p.s - o.c.s < 1000))) return false;
+            return true;
+        }
 
         // Loaded after the game connected: we missed the greeting that carries the opcode table. The server
         // makes that table once at startup and gives every connection the same one, so open our own short
@@ -1105,7 +1383,7 @@
             p.binaryType = 'arraybuffer';
             let finished = false;
             const done = () => { if (finished) return; finished = true; try { p.close(); } catch (_) { } };
-            p.addEventListener('open', () => { try { nativeSend.call(p, new TextEncoder().encode('SIG 0.0.1 ')); } catch (_) { done(); } });
+            p.addEventListener('open', () => { try { nativeSend.call(p, new TextEncoder().encode('SIG 0.0.1\0')); } catch (_) { done(); } });
             p.addEventListener('message', ev => {
                 if (!(ev.data instanceof ArrayBuffer)) return;
                 const dv = new DataView(ev.data);
@@ -1238,7 +1516,7 @@
                             if (hi) pos = i + 1; else if (p && !pos) pos = p;
                         }
                         this.lb = { t: now(), names, pos };
-                        if (!this.lbSentAt || now() - this.lbSentAt > 5000) { this.lbSentAt = now(); lab.send({ type: 'lb', names, pos, me: this.myName || '' }); }
+                        if (!this.lbSentAt || now() - this.lbSentAt > 2000 || pos !== this.lbSentPos) { this.lbSentAt = now(); this.lbSentPos = pos; lab.send({ type: 'lb', names, pos, me: this.myName || '', bot: !!CFG.bot, mass: Math.round(this.myCells().reduce((a, c) => a + c.s * c.s / 100, 0)) }); }
                     } catch (_) { }
                     break;
                 }
@@ -1544,9 +1822,13 @@
 
         leadTicks() { return this.rtt / GAME.tickMs + 0.5; }
         myCells() {
+            // (3.60.0) cached: called dozens of times a tick; rebuilt when a tick passes or our cells change
+            const mc = this._mcache;
+            if (mc && mc.tick === this.tick && mc.n === this.mine.size && mc.cs === this.cells.size) return mc.out.slice();
             const out = [];
             for (const id of this.mine) { const c = this.cells.get(id); if (c) out.push(c); }
-            return out;
+            this._mcache = { tick: this.tick, n: this.mine.size, cs: this.cells.size, out };
+            return out.slice();
         }
         // where the server will think my mouse is when nobody intervenes
         intendedAim() { return CFG.bot && this.botAim ? this.botAim : this.mouse; }
@@ -1622,6 +1904,13 @@
                 return;
             }
 
+            {   // (3.61.0) one escape state with hysteresis: on above 20% of our mass in danger, off after 1.5 s under 8%
+                const dr = (this.danger || 0) / Math.max(1, S.myMass), tn = now();
+                if (dr > 0.2) { this.escMode = true; this.escCalmSince = 0; }
+                else if (this.escMode) { if (dr < 0.08) { if (!this.escCalmSince) this.escCalmSince = tn; if (tn - this.escCalmSince > 1500) this.escMode = false; } else this.escCalmSince = 0; }
+            }
+            if (CFG.bot && stepEmergencyDive(this, S)) { hud.update(this); return; }
+            if (CFG.bot && stepRescueJump(this, S)) { hud.update(this); return; }
             if (!CFG.bot) {
                 this.mode = 'assist';
                 // the bot's opinion (it doesn't steer): for the way-out arrow and guardian
@@ -1647,6 +1936,9 @@
                 if (CFG.intelInject) { try { intelInject(this); } catch (_) { } }
                 hud.update(this); return;
             }
+            // the bot driving the tab you're looking at: still draw what teammates see (it used to be bot-off only, so with the
+            // bot on in the player's own tab the intel just vanished - the user, 2026-10-28). Only drawn, never steers.
+            if (CFG.intelInject && !document.hidden) { try { intelInject(this); } catch (_) { } }
 
             // mass we shot during a dash: forget pieces that are gone (eaten / out of view)
             if (this.dashEjects.size) {
@@ -1669,6 +1961,18 @@
             this.teamPool = teamPoolWanted(this, S);
             teamlog.tick(this, S);
             wobbleCheck(this, S);
+            // (3.61.5) THE CURE FOR DITHERING (the user: a human picks one way and goes): caught wobbling, ask the planner for the best
+            // way right now (it weighs danger, food and walls) and hold that heading for 1.5 s; nothing else takes turns meanwhile.
+            // The last checks (stranger mouths, teammates) still apply in sendMouse. An emergency dive already ran above.
+            if (this.unstickWant) {
+                this.unstickWant = 0;
+                try { const mv = steer(this, S); const dx = mv.aim.x - S.center.x, dy = mv.aim.y - S.center.y, dl = Math.hypot(dx, dy) || 1; this.unstickDir = { x: dx / dl, y: dy / dl }; this.unstickUntil = t + CFG.unstickMs; this.unsticks = (this.unsticks || 0) + 1; } catch (_) { }
+            }
+            if (this.unstickDir && t < (this.unstickUntil || 0) && !this.escMode) {
+                const p = { x: S.center.x + this.unstickDir.x * 900, y: S.center.y + this.unstickDir.y * 900 };
+                this.sendMouse(p.x, p.y); this.botAim = p; this.mode = 'unsticking: committed to one way';
+                hud.update(this); return;
+            }
             if (!busy && this.rerollNearTeam(S)) { hud.update(this); return; }
             // the captain's Tab ("feed me") comes first, even mid-dash (live 2026-10-27: broken up right next to the captain
             // with someone coming, Tab pressed - it was dashing away, "busy", and never looked at the order; both got eaten)
@@ -1677,7 +1981,11 @@
             if ((!busy || tabNow) && stepOrders(this, S)) { hud.update(this); return; }
             // mining comes before every team routine (the user: once mining, mine relentlessly - 'follow the leader' used
             // to drag a freshly popped bot off the field it had just split a virus on)
+            if (!busy && stepPack(this, S)) { hud.update(this); return; }
+            if (!busy && stepVirusGun(this, S)) { hud.update(this); return; }
+            if (!busy && !CFG.packs && stepCrew(this, S) && !(this.crewRole !== 'miner' && !/diving|pouring|banking/.test(this.mode || '') && popsOnTheWay(this, S))) { hud.update(this); return; }
             if (!busy && now() >= (this.miningOffUntil || 0) && stepMine(this, S)) { hud.update(this); return; }
+            if (!busy && stepSplitRun(this, S) && !popsOnTheWay(this, S)) { hud.update(this); return; }
             if (!busy && stepSlip(this, S)) { hud.update(this); return; }
             if (!busy && stepReachBait(this, S)) { hud.update(this); return; }
             if (!busy && stepCrown(this, S)) { hud.update(this); return; }
@@ -1719,7 +2027,7 @@
 
             // 3. virus shot in progress / new opportunity
             if (CFG.virusShots && !busy) {
-                if (!this.vshot && this.tick % 4 === 0) this.vshot = findVirusShot(S) || joinMateShot(S);
+                if (!this.vshot && this.tick % 4 === 0) this.vshot = (CFG.virusGun ? null : findVirusShot(S)) || joinMateShot(S);
                 if (this.vshot && stepVirusShot(this, S)) { hud.update(this); return; }
             } else this.vshot = null;
 
@@ -1773,7 +2081,9 @@
             if (!this.mine.size) teamlog.tick(this, null);   // close journal entries of a dead connection too
             if (retired || !CFG.bot || !CFG.autoRespawn) return;
             const t = now();
-            const vis = el => !!el && el.offsetParent !== null && el.offsetParent !== undefined;
+            // (offsetParent is always null for position:fixed elements - the death/stats overlay is one, so it never counted
+            // as showing: Chrome stayed on "Match Results" while playing again, 2026-10-29)
+            const vis = el => { if (!el) return false; const cs = getComputedStyle(el); return cs.display !== 'none' && cs.visibility !== 'hidden' && el.getClientRects().length > 0; };
             // Loaded after this game connection opened and couldn't learn its opcode table (the live server
             // gives each connection its own): at the death screen, close it so the game reconnects through us.
             // Nothing is lost there, and Continue + Play below then work as usual.
@@ -1788,10 +2098,18 @@
                 return;
             }
             if (this.mine.size) {
+                // alive but the death screen ("Match Results" / Continue) is still up - a direct respawn from a hidden
+                // window never went through it: Continue takes it to the menu, and the Esc below closes that
+                const contUp = document.getElementById('continue_button');
+                if (vis(contUp)) {
+                    if (t - (this.contAliveAt || 0) > 2000) { this.contAliveAt = t; contUp.click(); this.lastRespawn = t; this.menuSince = 0; }
+                    return;
+                }
                 const menu = document.getElementById('menu-wrapper');
-                if (vis(menu) && t - this.lastRespawn < 10000) {
+                // (any time, not only right after a respawn: a bot that is alive never needs the menu up - Chrome sat on the lobby, 2026-10-29)
+                if (vis(menu)) {
                     this.menuSince = this.menuSince || t;
-                    if (t - this.menuSince > 1200 && t - (this.lastEsc || 0) > 2500) {
+                    if (t - this.menuSince > 600 && t - (this.lastEsc || 0) > 1500) {
                         this.lastEsc = t;
                         // the site tracks held keys and ignores a key until it's released: send down + up
                         for (const type of ['keydown', 'keyup']) {
@@ -1866,7 +2184,7 @@
             // or during a relay (its tail) - never its last pieces
             const mMass = m.mass || m.cells.reduce((a2, r) => a2 + r[3] * r[3] / 100, 0);
             const lopsided = myMass > 0.62 * (myMass + mMass) && !((m.danger || 0) > 0.1 * mMass) && !(m.intent && m.intent.feeding) && !conn.squadNeed;
-            if ((m.cells.length >= 2 && !lopsided) || (m.relay && m.relay.active) || (conn.relay && conn.relay.active)) S.poolKeys.add(m.key);
+            if (!(CFG.crew && (m.mining || conn.mining)) && ((m.cells.length >= 2 && !lopsided) || (m.relay && m.relay.active) || (conn.relay && conn.relay.active))) S.poolKeys.add(m.key);
             // how much of it we may take before we'd hold 60%+ of the team
             const poolFree = ((m.danger || 0) > 0.1 * mMass) || (m.intent && m.intent.feeding) || conn.squadNeed;
             (S.poolRoom = S.poolRoom || new Map()).set(m.key, poolFree ? Infinity : Math.max(0, 0.6 * (myMass + mMass) - myMass));
@@ -1977,6 +2295,32 @@
                 S.enemies[i] = Object.assign({}, o, { s: Math.sqrt(o.s * o.s + add), pourFrom: o.s });
             }
         }
+        // TEAM POTENTIAL (3.55.0). Live, 3 days of deaths at 1000+ mass: in 81% the killer's mass in view grew 1.4x or more
+        // (median 6x) in the last seconds - a partner poured into it right beside us, then it split. A player with a
+        // teammate close enough to pour in (known mates, same name, same clan tag) counts at the size it has after
+        // the pour: the bigger of the two is the receiver, the other needs at most two splits to be edible.
+        if (CFG.teamPotential) {
+            const E = S.enemies, n = E.length, add = new Map();
+            const rel = (a, b) => {
+                if (a.key === b.key) return false;
+                if ((a.name && a.name === b.name) || (a.clan && a.clan === b.clan)) return true;
+                const ta = teamers.get(a.key), tb = teamers.get(b.key);
+                return !!((ta && ta.mates.has(b.key)) || (tb && tb.mates.has(a.key)));
+            };
+            for (let i = 0; i < n; i++) {
+                const o = E[i]; if (o.remote || isBot(o)) continue;
+                for (let j = 0; j < n; j++) {
+                    const p = E[j]; if (i === j || p.remote || p.s > o.s || (p.s === o.s && p.id > o.id) || !rel(o, p)) continue;
+                    if (Math.hypot(o.x - p.x, o.y - p.y) - o.s - p.s > CFG.potentialRange || !canEat(o.s, p.s / 2)) continue;
+                    add.set(i, (add.get(i) || 0) + p.s * p.s);
+                }
+            }
+            for (const [i, a2] of add) {
+                const o = E[i]; if (a2 < CFG.potentialMin * o.s * o.s) continue;
+                E[i] = Object.assign({}, o, { s: Math.sqrt(o.s * o.s + a2 * CFG.potentialShare), pourFrom: o.pourFrom || o.s, potential: true });
+                (conn.potSeen = conn.potSeen || new Map()).set(o.name, t);
+            }
+        }
         if (conn.tick % 10 === 0) noteBigPlayers(S);
         S.virusFarm = virusFarmOn(S);
         S.captain = captainOf(S, conn);
@@ -2046,26 +2390,30 @@
     // shots can't reach it); after eating one, the one BEHIND it along the line we were shooting (nearest to where it
     // was, within 60 deg of that line); only with nothing there, the closest one ahead of our heading
     function mineNextTarget(mine, viruses, heading, last, allowBehind = true) {
-        let free = viruses.filter(v => mine.every(c => Math.hypot(v.x - c.x, v.y - c.y) > c.s + v.s + 30));
+        const free = viruses.filter(v => mine.every(c => Math.hypot(v.x - c.x, v.y - c.y) > c.s + v.s + 30));
         if (!free.length) return null;
-        // (the user, 2026-10-25) not one right in front of us: shooting it parks every piece on it and we stall - prefer
-        // ones at least CFG.mineAimMin clear of all our cells, the very close ones get eaten in passing
         let cx = 0, cy = 0, w = 0; for (const c of mine) { const m = c.s * c.s; cx += c.x * m; cy += c.y * m; w += m; } cx /= w; cy /= w;
         const bigS = mine.reduce((a, c) => Math.max(a, c.s), 0);
-        const roomy = free.filter(v => mine.every(c => Math.hypot(v.x - c.x, v.y - c.y) - c.s - v.s > CFG.mineAimMin) &&
-            Math.hypot(v.x - cx, v.y - cy) - bigS - v.s > CFG.mineAimMin);
-        if (roomy.length) free = roomy;
-        if (last) {
-            let best = null, bd = Infinity;
-            for (const v of free) {
-                const ox = v.x - last.x, oy = v.y - last.y, od = Math.hypot(ox, oy);
-                if (od < 1 || (ox * last.dx + oy * last.dy) / od < 0.5) continue;
-                if ((v.x - cx) * last.dx + (v.y - cy) * last.dy <= 0) continue;   // and still in front of us (we roll on past the eaten one)
-                if (od < bd) { bd = od; best = v; }
+        // (the user, 2026-10-25) prefer ones not right on top of us: shooting those parks every piece on them
+        const roomy = v => mine.every(c => Math.hypot(v.x - c.x, v.y - c.y) - c.s - v.s > CFG.mineAimMin) && Math.hypot(v.x - cx, v.y - cy) - bigS - v.s > CFG.mineAimMin;
+        // (the user, 2026-10-28) but DIRECTION comes first: the next closest one the same way we were mining (else they
+        // turned back for a far "roomy" one and left the field they were in). Narrow cone, then wider; roomy first in each.
+        let dx = last ? last.dx : heading.x, dy = last ? last.dy : heading.y; const dl = Math.hypot(dx, dy);
+        if (dl > 1e-6) {
+            dx /= dl; dy /= dl;
+            for (const [minCos, needRoomy] of [[0.5, true], [0.5, false], [0, true], [0, false]]) {
+                let best = null, bd = Infinity;
+                for (const v of free) {
+                    const vx = v.x - cx, vy = v.y - cy, d = Math.hypot(vx, vy) || 1;
+                    if ((vx * dx + vy * dy) / d <= minCos || (needRoomy && !roomy(v))) continue;
+                    if (d < bd) { bd = d; best = v; }
+                }
+                if (best) return best;
             }
-            if (best) return best;
         }
-        return mineTargetAhead(mine, free, heading, allowBehind);
+        // nothing at all that way: the closest elsewhere (roomy first)
+        const r = free.filter(roomy);
+        return mineTargetAhead(mine, r.length ? r : free, heading, allowBehind);
     }
     // SLIP-THROUGH (the user, 2026-10-22; server maths): a cell is only eaten once the eater's CENTRE is within
     // size - ours/3 of ours, and a player's own pieces are pushed apart until they just touch (rigid, after 13 ticks).
@@ -2087,6 +2435,13 @@
         const hostile = e => e.player && !e.remote && !isAlly(e) && !conn.mateKeys.has(e.key);
         // can this player split onto us right now? (at the piece limit the server won't split them at all)
         const canSplitOnUs = e => (S.ownerCount.get(e.key) || 1) < GAME.maxCells && e.s >= GAME.minSplitSize && canEat(e.s / SQRT2, m.s);
+        // (live 2026-10-29: of 125 deaths with a slip, 81 were by someone OTHER than the player we slipped past - mostly
+        // teamers splitting in. Nobody else who could eat the lead may be within reach of it or of the prey.)
+        const outsider = (ownerKey, prey) => S.enemies.find(e => {
+            if (!hostile(e) || e.key === ownerKey || !canEat(e.s, m.s)) return false;
+            const reach = Math.max(e.s, enemySplitReach(e, m.s, S.ownerCount.get(e.key) || 1)) + CFG.slipOthersGap;
+            return Math.hypot(e.x - m.x, e.y - m.y) < reach || (prey && Math.hypot(e.x - prey.x, e.y - prey.y) < reach);
+        });
         let P = conn.slip;
         if (P && (t - P.since > CFG.slipMaxMs || !conn.cells.has(P.prey))) {
             if (!conn.cells.has(P.prey)) hud.flash('slip-through: ate it');
@@ -2107,6 +2462,11 @@
                 const blockers = owners.filter(e => canEat(e.s, m.s));
                 if (!blockers.length) continue;   // nothing in the way: the normal hunt does this one
                 if (owners.some(canSplitOnUs)) continue;
+                if (isTeamer(q.key)) continue;              // a teamer's partner feeds it mid-chase: its reach can't be trusted
+                if (outsider(q.key, q)) continue;
+                // (3.61.7) nor with ANY teamer that could eat our lead within 3,000: live, slip-throughs at 2.9k and 5.3k were eaten by the
+                // target's partner arriving from outside the lane (10 of 11 big-bot deaths in 40 min were to teamers)
+                if (S.enemies.some(e => e.player && !e.remote && e.key !== q.key && isTeamer(e.key) && canEat(e.s, m.s) && Math.hypot(e.x - q.x, e.y - q.y) < 3000)) continue;
                 if (owners.some(e => e.fresh && S.tick - e.born < 15)) continue;   // just split: their pieces overlap for 13 ticks, no lane
                 const sc = gain / (1 + dq / 600);
                 if (sc > bs) { bs = sc; best = q; }
@@ -2118,6 +2478,7 @@
         const q = conn.cells.get(P.prey);
         if (!q || !canEat(m.s, q.s)) { conn.slip = null; conn.slipOffUntil = t + 1500; return false; }
         const owners = S.enemies.filter(e => e.key === P.key && e.id !== q.id);
+        { const o = outsider(P.key, q); if (o) { hud.flash('slip-through: off (' + (o.name || 'someone') + ' could get us)'); conn.slip = null; conn.slipOffUntil = t + 3000; return false; } }
         if (owners.some(e => e.fresh && S.tick - e.born < 15)) { conn.mode = 'slip-through: waiting (they just split, the lane is shut for half a second)'; return false; }
         if (owners.some(canSplitOnUs)) { hud.flash('slip-through: off (they can split onto us now)'); conn.slip = null; conn.slipOffUntil = t + 3000; return false; }
         // every cell that could eat us, with where it will be; viruses that would pop us
@@ -2271,7 +2632,7 @@
     // up when nothing has been collected for a few seconds (then they no longer count as ours).
     function sweepAim(conn, S, M, blobs, t) {
         if (M.sweepN === undefined || blobs.length < M.sweepN) { M.sweepN = blobs.length; M.sweepAt = t; }
-        if (t - M.sweepAt > CFG.mineSweepIdleMs) { M.sweepGaveUp = true; hud.flash('mining: leaving the rest of our blobs'); return null; }
+        if (t - M.sweepAt > CFG.mineSweepIdleMs) { M.sweepGaveUp = true; conn.sweepOffUntil = t + 20000; hud.flash('mining: leaving the rest of our blobs'); return null; }
         const big = S.mine.reduce((a, c) => (c.s > a.s ? c : a));
         let best = null, bd = Infinity;
         for (const f of blobs) { const d = Math.hypot(f.x - big.x, f.y - big.y); if (d < bd) { bd = d; best = f; } }
@@ -2280,19 +2641,952 @@
         const dx = best.x - big.x, dy = best.y - big.y, dl = Math.hypot(dx, dy) || 1;
         return { x: best.x + dx / dl * 200, y: best.y + dy / dl * 200 };
     }
+    // ---------------------------------------------------------------- the crew (3.59.0)
+    const crewIsMiner = x => x.mass >= CFG.mineMinMass || (x.mining && x.mass >= CFG.mineKeepMass);
+    function crewMembers(conn, S) {
+        const t = now();
+        const out = [{ self: true, from: conn.memberId, mass: S.myMass, mining: !!conn.mining, c: S.center, name: 'me',
+            cells: S.mine.map(c => ({ id: c.id, x: c.x, y: c.y, s: c.s, live: c })) }];
+        for (const m of S.squad) {
+            if (!m.isBot || !m.cells || !m.cells.length || t - m.rx > 1500) continue;
+            const cells = m.cells.map(r => { const lc = conn.cells.get(r[0]); return lc ? { id: r[0], x: lc.x, y: lc.y, s: lc.s, live: lc } : { id: r[0], x: r[1], y: r[2], s: r[3], live: null }; });
+            out.push({ self: false, from: m.from, mass: m.mass || cells.reduce((a, c) => a + mass(c.s), 0), mining: !!m.mining, c: memberCenter(m), name: m.name || 'teammate', key: m.key, cells, m });
+        }
+        return out;
+    }
+    // shoot our mass into one cell of a teammate, hovering just outside it: every shot walks us a step toward the
+    // mouse (the server moves, then shoots), so inside the gap we back off without shooting and come in again
+    function crewShootInto(conn, S, T, who, label, noBack) {
+        const c0 = S.center, st = conn.crewSt || (conn.crewSt = {});
+        if (!S.mine.some(c => c.s >= GAME.minEjectSize)) return false;
+        let gap = Infinity, inReach = 0, shooters = 0;
+        for (const c of S.mine) {
+            const d = Math.hypot(c.x - T.x, c.y - T.y);
+            if (canEat(c.s, T.s) || canEat(T.s, c.s)) gap = Math.min(gap, d - c.s - T.s);
+            if (c.s >= GAME.minEjectSize) { shooters++; if (d - c.s < CFG.crewReach) inReach++; }
+        }
+        if (noBack) st.back = false; else if (gap < CFG.crewGapIn) st.back = true; else if (gap > CFG.crewGapOut) st.back = false;
+        if (st.back) {
+            // (3.61.2) curve round it instead of reversing (the user: no back-and-forth; a person circles and keeps shooting)
+            const dx = c0.x - T.x, dy = c0.y - T.y, dl = Math.hypot(dx, dy) || 1, sd = st.orbit || (st.orbit = Math.random() < 0.5 ? 1 : -1);
+            const p = { x: c0.x + (-dy / dl * sd * 0.9 + dx / dl * 0.45) * 700, y: c0.y + (dx / dl * sd * 0.9 + dy / dl * 0.45) * 700 };
+            conn.sendMouse(p.x, p.y); conn.botAim = p; conn.mode = 'crew: circling ' + who + ' (too close to feed)';
+            return true;
+        }
+        if (!inReach) {
+            // walk in; the feed line is the mode so the teammate guard lets us close up
+            // (3.60.9) through the planner like any trip: it weighs the strangers on the way (a straight walk went through one)
+            travel(conn, S, T.x, T.y, 'crew: closing in to feed ' + who);
+            return false;
+        }
+        // nobody who would eat the shots (or us) in the lane
+        const big = S.mine.reduce((a, c) => (c.s > a.s ? c : a));
+        const lane = S.enemies.find(e => !e.remote && e.player && !isAlly(e) && !conn.mateKeys.has(e.key) &&
+            segDist(e.x, e.y, big.x, big.y, T.x, T.y) < e.s + 100 && Math.hypot(e.x - big.x, e.y - big.y) < Math.hypot(T.x - big.x, T.y - big.y));
+        if (lane) { conn.mode = 'crew: holding the feed (' + (lane.name || 'someone') + ' in the lane)'; return false; }
+        const tgt = T.live || { x: T.x, y: T.y, s: T.s, vx: 0, vy: 0, vt: -1e9, player: true };
+        shootAt(conn, S, tgt);
+        conn.crewGaveAt = now();
+        conn.mode = label;
+        return true;
+    }
+    // ---------------------------------------------------------------- jump in to save (3.61.8)
+    function stepRescueJump(conn, S) {
+        if (!CFG.rescueJump || !CFG.bot || !CFG.multibox || !S.squad.length || conn.escMode) { conn.rJump = null; return false; }
+        const t = now(), big = S.mine.reduce((a, c) => (c.s > a.s ? c : a)), myM = S.myMass;
+        let best = null;
+        for (const m of S.squad) {
+            if (!m.cells || !m.cells.length || t - m.rx > 1000) continue;
+            const r = m.cells.reduce((a, c) => (c[3] > a[3] ? c : a)), lc = conn.cells.get(r[0]);
+            const B = lc ? { x: lc.x, y: lc.y, s: lc.s, vx: lc.vx, vy: lc.vy, vt: lc.vt } : { x: r[1], y: r[2], s: r[3] };
+            if (S.mine.some(c => !canEat(B.s, c.s * 1.01))) continue;                    // it must swallow all of us
+            const mB = mass(B.s), grown = Math.sqrt((mB + myM) * 100);
+            for (const e of S.enemies) {
+                if (!e.player || e.remote || conn.mateKeys.has(e.key) || isAlly(e) || !canEat(e.s, B.s)) continue;
+                if (canEat(e.s, grown * 1.03)) continue;                                   // our mass doesn't make it safe from this one
+                const d = Math.hypot(e.x - B.x, e.y - B.y), oc = S.ownerCount.get(e.key) || 1, reach = enemySplitReach(e, B.s, oc);
+                const closing = e.vt >= S.tick - 2 ? ((e.vx || 0) * (B.x - e.x) + (e.vy || 0) * (B.y - e.y)) / (d || 1) : 0;
+                if (!(closing > 1 || isTeamer(e.key) || recentKiller(e.name) || isFoe(e))) continue;
+                const inReach = (reach > -Infinity && d < reach + 400) || d - e.s < 700;
+                if (!inReach) continue;
+                const dd = Math.hypot(B.x - big.x, B.y - big.y), line = B.s - big.s / GAME.eatOverlapDiv;
+                const ourEta = Math.max(0, dd - line) / (moveSpeed(big.s) + 0.5);
+                const eEta = Math.max(8, (d - Math.max(reach > -Infinity ? reach : 0, e.s - B.s / GAME.eatOverlapDiv)) / (moveSpeed(e.s) + 0.5) + 8);
+                if (ourEta > eEta + 6) continue;
+                if (segDist(e.x, e.y, big.x, big.y, B.x, B.y) < e.s * 0.8) continue;      // not through its mouth
+                if (!best || ourEta < best.eta) best = { eta: ourEta, B, m, e };
+            }
+        }
+        if (!best) { conn.rJump = null; return false; }
+        conn.squadMerge = true; conn.mergeUntil = t + 600; conn.diveHold = { until: t + 600 };
+        const p = predict(best.B, S.L, S.tick);
+        conn.sendMouse(p.x, p.y); conn.botAim = p;
+        conn.mode = 'team: jumping into ' + (best.m.name || 'a teammate') + ' to make it too big for ' + (best.e.name || 'a player');
+        if (!conn.rJump) { conn.rJump = { t }; try { teamlog.start(conn, S, 'jump in to save', { foe: best.e.name || '', foeMass: Math.round(mass(best.e.s)), mate: Math.round(mass(best.B.s)), mine: Math.round(myM) }, best.m.key, best.e.key, 3000); } catch (_) { } }
+        return true;
+    }
+    // ---------------------------------------------------------------- the emergency dive (3.60.2)
+    function stepEmergencyDive(conn, S) {
+        if (!CFG.emergencyDive || !CFG.bot || !CFG.multibox || !S.squad.length || S.myMass < CFG.teamDiveMinMass) { conn.eDive = null; return false; }
+        const t = now(), big = S.mine.reduce((a, c) => (c.s > a.s ? c : a));
+        // the stranger that gets our biggest piece soonest (ticks): its split if we are in its split reach, else its walk
+        let foe = null, ft = Infinity;
+        for (const e of S.enemies) {
+            if (!e.player || e.remote || conn.mateKeys.has(e.key) || isAlly(e) || !canEat(e.s, big.s)) continue;
+            const d = Math.hypot(e.x - big.x, e.y - big.y), line = e.s - big.s / GAME.eatOverlapDiv;
+            const oc = S.ownerCount.get(e.key) || 1, reach = enemySplitReach(e, big.s, oc);
+            let tt = Infinity;
+            const closing = e.vt >= S.tick - 2 ? ((e.vx || 0) * (big.x - e.x) + (e.vy || 0) * (big.y - e.y)) / (d || 1) : 0;
+            // (3.60.4) in its split reach counts only if it is coming at us, or is a known killer / teamer: live, diving for every
+            // big player we happened to be near cost a respawn every ~45 s per bot
+            if (reach > -Infinity && d < reach && (closing > 1 || isTeamer(e.key) || recentKiller(e.name) || isFoe(e))) tt = 8;
+            if (d - line < 400) {
+                tt = Math.min(tt, Math.max(1, (d - line) / Math.max(0.5, closing, moveSpeed(e.s) - moveSpeed(big.s) + 0.5)));
+            }
+            if (tt < ft) { ft = tt; foe = e; }
+        }
+        if (!foe || ft > 20) { conn.eDive = null; return false; }
+        // the teammate cell that can take our biggest piece soonest
+        let best = null;
+        for (const m of S.squad) {
+            if (!m.cells || !m.cells.length || t - m.rx > 1000) continue;
+            for (const r of m.cells) {
+                const lc = conn.cells.get(r[0]), k = lc ? { x: lc.x, y: lc.y, s: lc.s } : { x: r[1], y: r[2], s: r[3] };
+                if (!canEat(k.s, big.s * 1.01)) continue;
+                const d = Math.hypot(k.x - big.x, k.y - big.y), line = k.s - big.s / GAME.eatOverlapDiv;
+                if (segDist(foe.x, foe.y, big.x, big.y, k.x, k.y) < foe.s * 0.8) continue;
+                const walk = Math.max(0, d - line) / (moveSpeed(big.s) + 0.5);
+                const half = big.s / SQRT2, lineH = k.s - half / GAME.eatOverlapDiv;
+                const canSplit = big.s >= GAME.minSplitSize && S.mine.length < CFG.maxCells && canEat(k.s, half * 1.01) && d - lineH < GAME.splitDistance + GAME.splitBoost * 0.85;
+                const tt = Math.min(walk, canSplit ? 12 : Infinity);
+                if (!best || tt < best.tt) best = { tt, k, m, split: canSplit && walk > 12 };
+            }
+        }
+        if (!best || best.tt >= ft) { conn.eDive = null; return false; }
+        conn.squadMerge = true; conn.mergeUntil = t + 600; conn.diveHold = { until: t + 600 };
+        conn.sendMouse(best.k.x, best.k.y); conn.botAim = { x: best.k.x, y: best.k.y };
+        if (best.split && t - (conn.eDiveSplitAt || 0) > 300) { conn.sendSplit(1); conn.eDiveSplitAt = t; conn.lastAction = t; }
+        conn.mode = 'team: diving into ' + (best.m.name || 'a teammate') + ' (' + (foe.name || 'a player') + ' was about to eat us)' + (best.split ? ', split' : '');
+        if (!conn.eDive) { conn.eDive = { t }; try { teamlog.start(conn, S, 'emergency dive', { foe: foe.name || '', foeMass: Math.round(mass(foe.s)), split: best.split }, best.m.key, foe.key, 3000); } catch (_) { } }
+        return true;
+    }
+    // ---------------------------------------------------------------- the split-run (3.59.4)
+    function stepSplitRun(conn, S) {
+        const end = () => { conn.sr = null; return false; };
+        if (!CFG.splitRun || !CFG.bot || !CFG.multibox) return end();
+        const t = now();
+        if (conn.mining || t < (conn.srOffUntil || 0) || now() < (conn.gunChaseUntil || 0)) return end();
+        if (S.captain && S.captain.order && S.captain.order.mode !== 'free' && !S.captain.botCarrier) return end();
+        if (conn.escMode || conn.danger > 0.12 * S.myMass + 1 || /^crew: (pour|div|taking the pour|bank|taking)/.test(conn.mode || '') && conn.crewPour) return end();
+        // the partner: the nearest calm bot of ours that is not mining, and that is not running with someone else
+        let P = null, pd = CFG.srRange;
+        for (const m of S.squad) {
+            if (!m.isBot || !m.cells || !m.cells.length || t - m.rx > 800 || m.mining || (m.danger || 0) > 0.12 * (m.mass || 1) + 1) continue;
+            if (m.sr && m.sr.with !== conn.memberId) continue;
+            const mc = memberCenter(m), d = Math.hypot(mc.x - S.center.x, mc.y - S.center.y);
+            if (d < pd) { pd = d; P = m; }
+        }
+        if (!P || S.myMass + (P.mass || 0) < CFG.srMinTeam || Math.min(S.myMass, P.mass || 0) < CFG.srMinEach) return end();
+        const pc = P.cells.map(r => { const lc = conn.cells.get(r[0]); return lc ? { id: r[0], x: lc.x, y: lc.y, s: lc.s } : { id: r[0], x: r[1], y: r[2], s: r[3] }; });
+        const myBig = S.mine.reduce((a, c) => (c.s > a.s ? c : a)), thBig = pc.reduce((a, c) => (c.s > a.s ? c : a));
+        {   // (3.59.6) a threat triggers the team's own moves (dive, turn, flee together); the split-run never holds the wheel then
+            const pieceS = Math.min(myBig.s, thBig.s) / SQRT2, mc = memberCenter(P);
+            const near = S.enemies.find(e => e.player && !e.remote && !conn.mateKeys.has(e.key) && !isAlly(e) && canEat(e.s, pieceS) && Math.min(Math.hypot(e.x - S.center.x, e.y - S.center.y), Math.hypot(e.x - mc.x, e.y - mc.y)) < e.s + CFG.srClear + 600);
+            if (near) { conn.srOffUntil = now() + 2500; return end(); }
+        }
+        const lead = conn.memberId < P.from, bo = S.border;
+        const tc = { x: (S.center.x * S.myMass + memberCenter(P).x * P.mass) / (S.myMass + P.mass), y: (S.center.y * S.myMass + memberCenter(P).y * P.mass) / (S.myMass + P.mass) };
+        // ONE shared point ahead: the lower id picks it (on along where it was heading, kept off the border) and says so
+        let goal = null;
+        if (lead) {
+            goal = conn.srGoal;
+            const bad = g => !g || Math.hypot(g.x - tc.x, g.y - tc.y) < 1400 || (bo && wallGap(S, g) < 1500);
+            if (bad(goal)) {
+                let a = isNaN(conn.botDir) ? Math.random() * 6.283 : conn.botDir;
+                for (let i = 0; i < 12; i++) { const g = { x: tc.x + Math.cos(a) * 6000, y: tc.y + Math.sin(a) * 6000 }; if (bo) { g.x = Math.max(bo.minX + 1800, Math.min(bo.maxX - 1800, g.x)); g.y = Math.max(bo.minY + 1800, Math.min(bo.maxY - 1800, g.y)); } if (!bad(g)) { goal = g; break; } a += 0.9; }
+                conn.srGoal = goal;
+            }
+        } else if (P.sr && P.sr.goal) goal = { x: P.sr.goal[0], y: P.sr.goal[1] };
+        if (!goal) { conn.sr = { with: P.from, goal: null, role: 'wait', give: 0, keep: 0 }; return false; }
+        const gl = Math.hypot(goal.x - tc.x, goal.y - tc.y) || 1, ux = (goal.x - tc.x) / gl, uy = (goal.y - tc.y) / gl;
+        // the body owns the biggest piece (the lower id on a near tie; whoever is giving stays the body while its pieces fly)
+        const iGive = conn.sr && conn.sr.give > Date.now(), theyGive = P.sr && P.sr.give > Date.now();
+        const iBody = iGive || (!theyGive && (myBig.s > thBig.s * 1.04 || (myBig.s >= thBig.s * 0.96 && lead)));
+        const sr = conn.sr = { with: P.from, goal: [Math.round(goal.x), Math.round(goal.y)], role: iBody ? 'body' : 'runner', give: iGive ? conn.sr.give : 0, keep: iGive ? conn.sr.keep : 0 };
+        if (iBody) {
+            // how many presses: every piece halves each press (up to 16 pieces); the pieces must end up edible for its biggest
+            const need = thBig.s / (GAME.eatMult * 1.05);
+            let k = 0, ps = myBig.s, cnt = S.mine.length;
+            while (ps > need && cnt * 2 <= CFG.maxCells && ps >= GAME.minSplitSize) { ps /= SQRT2; cnt *= 2; k++; }
+            const ok = k >= 1 && ps <= need;
+            // where the runner's eater is, measured along the way we go from our front piece
+            const rx = thBig.x - myBig.x, ry = thBig.y - myBig.y, rd = Math.hypot(rx, ry) || 1, along = rd - myBig.s, side = (rx * ux + ry * uy) / rd > 0.5 ? 0 : 9999;
+            const land = { x: myBig.x + rx / rd * (myBig.s + 600), y: myBig.y + ry / rd * (myBig.s + 600) };
+            const thief = S.enemies.find(e => e.player && !e.remote && !conn.mateKeys.has(e.key) && canEat(e.s, ps) && Math.hypot(e.x - land.x, e.y - land.y) < e.s + CFG.srClear);
+            if (!ok) { if (!conn.srStallAt) conn.srStallAt = t; if (t - conn.srStallAt > CFG.srStallMs) { conn.srOffUntil = t + CFG.srRestMs; conn.srStallAt = 0; hud.flash('split-run: resting (pieces too small to hand over until they merge)'); return end(); } }
+            else conn.srStallAt = 0;
+            if (ok && !thief && !iGive && along > 180 && along < 950 && side < 320 && t - (conn.srSplitAt || 0) > CFG.srEveryMs && S.mine.length < CFG.maxCells) {
+                const aim = { x: thBig.x + rx / rd * 260, y: thBig.y + ry / rd * 260 };
+                conn.sendMouse(aim.x, aim.y); conn.botAim = aim; conn.sendSplit(k);
+                conn.srSplitAt = t; conn.lastAction = t; sr.give = Date.now() + CFG.srGiveMs; sr.keep = myBig.id; conn.srSplits = (conn.srSplits || 0) + 1;
+                conn.mode = 'split-run: splitting x' + k + ' into ' + (P.name || 'our teammate');
+                try { teamlog.start(conn, S, 'split-run hand-off', { k, pieces: S.mine.length, mine: Math.round(S.myMass), theirs: Math.round(P.mass) }, P.key, '', 2500); } catch (_) { }
+                return true;
+            }
+            // walk the way we go; slowly while the runner is not ahead yet (small pieces are faster, it comes past)
+            const slow = !iGive && ok && (along < 180 || side > 0);
+            const tooNear = canEat(myBig.s, thBig.s) && rd < myBig.s + thBig.s + 160;
+            // (3.60.5) never crawl or stand: too near the runner -> step aside at full speed; else on at full speed
+            const sideX = -uy * (((thBig.x - myBig.x) * -uy + (thBig.y - myBig.y) * ux) > 0 ? -1 : 1), sideY = ux * (((thBig.x - myBig.x) * -uy + (thBig.y - myBig.y) * ux) > 0 ? -1 : 1);
+            void slow;
+            const aim = tooNear ? { x: myBig.x + (ux * 0.5 + sideX) * 900, y: myBig.y + (uy * 0.5 + sideY) * 900 } : { x: myBig.x + ux * 900, y: myBig.y + uy * 900 };
+            conn.sendMouse(aim.x, aim.y); conn.botAim = aim;
+            conn.mode = 'split-run: ' + (iGive ? 'handing over' : thief ? 'holding (' + (thief.name || 'someone') + ' would take the pieces)' : !ok ? 'no split fits yet' : slow ? 'letting ' + (P.name || 'the runner') + ' get ahead' : 'body, waiting for the runner in the lane');
+            return true;
+        }
+        // the runner
+        if (theyGive) {
+            // eat what was sent: the nearest piece of theirs one of ours can eat, never the one it keeps
+            let best = null, bd = Infinity;
+            for (const c of pc) { if (c.id === P.sr.keep) continue; for (const q of S.mine) { if (!canEat(q.s, c.s * 1.02)) continue; const d = Math.hypot(c.x - q.x, c.y - q.y) - q.s; if (d < bd) { bd = d; best = { c, q }; } } }
+            if (best && bd < 1500) {
+                const dx = best.c.x - best.q.x, dy = best.c.y - best.q.y, dl = Math.hypot(dx, dy) || 1;
+                const aim = { x: best.c.x + dx / dl * 150, y: best.c.y + dy / dl * 150 };
+                conn.sendMouse(aim.x, aim.y); conn.botAim = aim;
+                conn.mode = 'split-run: eating what ' + (P.name || 'our teammate') + ' sent';
+                return true;
+            }
+        }
+        // get ahead of the body's front piece, in the lane, and keep going at its pace
+        const sgn = ((myBig.x - thBig.x) * -uy + (myBig.y - thBig.y) * ux) >= 0 ? 1 : -1, reachD = thBig.s + CFG.srAhead + myBig.s;
+        const spot = { x: thBig.x + ux * reachD * 0.8 - uy * sgn * reachD * 0.5, y: thBig.y + uy * reachD * 0.8 + ux * sgn * reachD * 0.5 };
+        const off = Math.hypot(spot.x - myBig.x, spot.y - myBig.y);
+        let aim = off > 120 ? spot : { x: myBig.x + ux * 60, y: myBig.y + uy * 60 };
+        for (const c of pc) { if (!S.mine.some(q => canEat(c.s, q.s))) continue; const clr = c.s + myBig.s + 80; if (segDist(c.x, c.y, myBig.x, myBig.y, aim.x, aim.y) < clr) { const ox = myBig.x - c.x, oy = myBig.y - c.y, ol = Math.hypot(ox, oy) || 1; aim = { x: c.x + ox / ol * (clr + 200) - uy * sgn * 300, y: c.y + oy / ol * (clr + 200) + ux * sgn * 300 }; break; } }
+        conn.sendMouse(aim.x, aim.y); conn.botAim = aim;
+        conn.mode = 'split-run: ' + (off > 120 ? 'getting ahead of ' : 'in the lane ahead of ') + (P.name || 'our teammate');
+        return true;
+    }
+    // ---------------------------------------------------------------- virus launches at players (3.59.3)
+    // WHAT A LAUNCHED VIRUS DOES (server code): the cell that swallows it gains 100 mass. If its owner has a free piece
+    // slot the cell then bursts: half stays in one piece, a quarter in the next..., the rest are ~110-mass crumbs flung
+    // up to 780 away, and nothing of theirs merges for 30 s. At 16 pieces nothing bursts: it only got 100 bigger. So
+    // ONE virus splits a player and every further one feeds it. A launch needs the virus's 5th hit; the new virus
+    // flies 880 along that last blob (which strays up to 0.3 rad either side); every piece of ours of 100+ shoots on a
+    // press, and a miss flies on to the target.
+    // THE RULES (the user, 2026-11-13, after the old launcher lost 39,452 mass in 30 tries for 3,769 gained):
+    //  1 one virus per player, then none at it for 30 s (the whole team counts)   2 never at a player with 16 pieces
+    //  3 press exactly the hits the virus still needs, only with few shooting pieces   4 loaded guns: with a threat in
+    //  view, the virus between us and it is fed to 4 hits ahead of time   5 only two reasons: a hunter that can eat or
+    //  split onto our biggest piece (or a teammate's) is coming, or one of ours can split onto its half / quarter right
+    //  after   6 from a stand-off, never onto the virus   7 watch what it did: burst -> chase the pieces, no more
+    //  viruses; only fed -> virus-proof for 30 s; missed -> leave it lying as a mine   8 every launch is logged.
+    const gunLog = new Map();     // player key -> { t, by, result, proofUntil }: our launches and the ones teammates told us of
+    // the pieces a cell of this mass (the virus's 100 already added) bursts into with this many free slots: [kept, ...flung]
+    function popPieces(m, free) {
+        if (free <= 0) return [m];
+        const splitMin = GAME.minSplitSize * GAME.minSplitSize / 100;
+        if (m / free < splitMin) { let amount = 2, per = NaN; while ((per = m / (amount + 1)) >= splitMin && amount * 2 <= free) amount *= 2; return new Array(amount + 1).fill(per); }
+        const out = []; let next = m / 2, left = m / 2, cl = free;
+        while (cl > 0) { if (next / cl < splitMin) break; while (next >= left && cl > 1) next /= 2; out.push(next); left -= next; cl--; }
+        const all = out.concat(new Array(cl).fill(cl > 0 ? left / cl : 0));
+        return [m - all.reduce((a, b) => a + b, 0)].concat(all);
+    }
+    // is a player big enough to swallow a virus standing where a virus fed from (sx,sy) would send the new one?
+    // (beyond it along the shot, up to the 880 it flies plus the player's own size; wider with distance: shots stray)
+    function launchPathPlayer(conn, S, sx, sy, v) {
+        const dx = v.x - sx, dy = v.y - sy, d = Math.hypot(dx, dy) || 1, ux = dx / d, uy = dy / d;
+        for (const e of S.enemies) {
+            if (!e.player || e.remote || conn.mateKeys.has(e.key) || !canEat(e.s, GAME.virusSize * 1.02)) continue;
+            const ex = e.x - v.x, ey = e.y - v.y, along = ex * ux + ey * uy;
+            if (along < -e.s * 0.3 || along > GAME.virusSplitBoost + e.s) continue;
+            const side = Math.abs(ex * uy - ey * ux);
+            if (side < e.s + CFG.gunPathStray * Math.max(0.25, Math.min(1, along / GAME.virusSplitBoost))) return e;
+        }
+        return null;
+    }
+    const virusFed = v => Math.max(0, Math.min(GAME.virusFeedTimes - 1, Math.round((v.s * v.s - GAME.virusSize * GAME.virusSize) / 1000)));
+    function gunDone(conn, S, G, result) {
+        const lg = gunLog.get(G.key) || { t: now(), by: conn.memberId };
+        lg.result = result;
+        if (result === 'only fed it') lg.proofUntil = now() + CFG.gunAgainMs;                    // it was full: no more viruses into it
+        if (result === 'missed' || result === 'held') lg.t = now() - CFG.gunAgainMs + (result === 'held' ? 800 : 2500);   // may try again shortly
+        gunLog.set(G.key, lg);
+        if (G.phase !== 'prime') {
+            const line = 'virus launch at ' + G.name + ' (' + G.m0 + ' mass, ' + G.oc0 + ' piece' + (G.oc0 === 1 ? '' : 's') + ') - ' + G.why + ' for ' + G.forName + ': ' + result + ' (' + G.pressed + ' press' + (G.pressed === 1 ? '' : 'es') + ')';
+            (conn.gunResults || (conn.gunResults = [])).push(new Date().toISOString().slice(11, 19) + ' ' + line); if (conn.gunResults.length > 40) conn.gunResults.shift();
+            try { hud.flash(line); lab.event(line); } catch (_) { }
+            try { const en = teamlog.open.find(x => x.conn === conn && /^virus launch/.test(x.kind)); if (en) { en.info.result = result; en.info.presses = G.pressed; } } catch (_) { }
+            // burst and it is ours to take: the mining / crew steps stand back for a moment so the split and the hunt can act
+            if (result === 'burst' && G.why === 'food' && G.forSelf && S.mine.length < CFG.maxCells) conn.gunChaseUntil = now() + 3000;
+        }
+        conn.gun = null;
+    }
+    function gunRun(conn, S, G, t) {
+        const v = conn.cells.get(G.vid);
+        const shooters = S.mine.filter(c => c.s >= GAME.minEjectSize);
+        if (!shooters.length || !v || !v.virus) { gunDone(conn, S, G, G.launched ? 'missed' : 'held'); return false; }
+        const src = shooters.reduce((a, c) => (c.s > a.s ? c : a));
+        const dx = v.x - src.x, dy = v.y - src.y, d = Math.hypot(dx, dy) || 1, gapE = d - src.s;
+        const fedNow = virusFed(v);
+        if (v.s > (G.sMax || 0)) G.sMax = v.s;
+        const back = () => { const p = { x: src.x - dx / d * 500, y: src.y - dy / d * 500 }; conn.sendMouse(p.x, p.y); conn.botAim = p; };
+        const mayPop = S.mine.length < CFG.maxCells && canEat(src.s, v.s);
+        if (G.phase === 'hold') {
+            // the firing spot: the virus between us and the hunter. Get there, load it (if only one piece of ours shoots), and
+            // hand over to the launch the moment the hunter is in range; give it up if its split could reach us first.
+            const e = conn.cells.get(G.eId);
+            const ocNow = S.ownerCount.get(G.key) || 0;
+            if (!e || ocNow >= CFG.maxCells || t > G.until) { conn.gun = null; return false; }
+            const ex = v.x - e.x, ey = v.y - e.y, el = Math.hypot(ex, ey) || 1, ux = ex / el, uy = ey / el;
+            const reach = Math.max(0, enemySplitReach(e, src.s, Math.max(1, ocNow)));
+            const dE = Math.hypot(e.x - src.x, e.y - src.y);
+            if (dE < reach + CFG.gunHoldGap) { conn.gun = null; hud.flash('virus gun: ' + G.name + ' too close, no launch - away'); return false; }
+            // launch window open? then the normal search takes it (it applies every rule again)
+            if (el < GAME.virusSplitBoost * 0.92 + e.s * 0.6 && el > e.s * 0.6 + v.s) { conn.gun = null; conn.gunHeld = { key: G.key, vid: G.vid, until: t + 600 }; return stepVirusGun(conn, S); }
+            const so = src.s + CFG.gunStandoff + 70, fx = v.x + ux * so, fy = v.y + uy * so;
+            const off = Math.hypot(fx - src.x, fy - src.y);
+            if (off > 45) {
+                // not there yet: straight to the spot, or round the virus if the straight way crosses it
+                let ax = fx, ay = fy; const clear = src.s + v.s * 0.5 + 60;
+                if (mayPop && segDist(v.x, v.y, src.x, src.y, fx, fy) < clear) { const px = -(fy - src.y), py = fx - src.x, pl = Math.hypot(px, py) || 1, sd = ((v.x - src.x) * px + (v.y - src.y) * py) > 0 ? -1 : 1; ax = v.x + sd * px / pl * (clear + 160); ay = v.y + sd * py / pl * (clear + 160); }
+                conn.sendMouse(ax, ay); conn.botAim = { x: ax, y: ay };
+                conn.mode = 'virus gun: getting behind a virus (' + G.name + ' is coming)';
+                return true;
+            }
+            // on the spot: load it up to 4 hits while we wait (one shooting piece only, and never the 5th)
+            if (CFG.gunPrime && shooters.length === 1 && fedNow + G.press.filter(pt => S.tick - pt <= 10).length < GAME.virusFeedTimes - 1 && G.pressed < 4 && (!mayPop || gapE > CFG.gunStandoff + 20)) {
+                conn.sendMouse(v.x, v.y); conn.botAim = { x: v.x, y: v.y }; conn.sendEject(); G.pressed++; G.press.push(S.tick); markVirusHit(conn, v.id); conn.vfShotAt = t;
+                conn.mode = 'virus gun: loading the virus for ' + G.name + ' (' + Math.min(4, fedNow + 1) + ' of 4 hits)';
+                return true;
+            }
+            conn.sendMouse(fx, fy); conn.botAim = { x: fx, y: fy };
+            conn.mode = 'virus gun: loaded, waiting for ' + G.name + ' to come into range';
+            return true;
+        }
+        if (G.phase === 'prime') {
+            // feed it to 4 hits, never 5 (that would launch it nowhere useful): at most the presses it was short of
+            if (G.pressed >= G.need || fedNow >= GAME.virusFeedTimes - 1 || t > G.until || (mayPop && gapE < CFG.gunStandoff - 20) || conn.danger > 0.35 * S.myMass + 1) { conn.gun = null; if (mayPop && gapE < CFG.gunStandoff) { back(); conn.mode = 'virus gun: loaded, stepping back'; return true; } return false; }
+            conn.sendMouse(v.x, v.y); conn.botAim = { x: v.x, y: v.y }; conn.sendEject(); G.pressed++;
+            markVirusHit(conn, v.id); conn.vfShotAt = t;
+            conn.mode = 'virus gun: loading the virus toward ' + G.name + ' (' + (G.fed0 + G.pressed) + ' of 4 hits)';
+            return true;
+        }
+        if (G.phase === 'fire') {
+            // launched: the one we fed is back to its plain size
+            if (G.sMax > GAME.virusSize + 2 && v.s <= GAME.virusSize + 1 && G.pressed > 0) { G.launched = true; G.phase = 'watch'; G.launchedAt = t; G.backTicks = 5; }
+            else {
+                const e = conn.cells.get(G.eId);
+                const ocNow = Math.max(S.ownerCount.get(G.key) || 0, 0);
+                if (!e || ocNow >= CFG.maxCells) { gunDone(conn, S, G, 'held'); return false; }                       // rule 2, re-checked every tick
+                if (t > G.until || (mayPop && gapE < CFG.gunStandoff - 30)) { gunDone(conn, S, G, 'held'); if (mayPop) { back(); return true; } return false; }
+                // shots that have had time to land and didn't show count as misses; never more in the air than it still needs
+                G.press = G.press.filter(pt => S.tick - pt <= 10);
+                const landed = Math.max(0, fedNow - G.fed0), still = GAME.virusFeedTimes - fedNow;
+                void landed;
+                conn.sendMouse(v.x, v.y); conn.botAim = { x: v.x, y: v.y };
+                if (G.press.length < still && G.pressed < G.need + 3) { conn.sendEject(); G.pressed++; G.press.push(S.tick); markVirusHit(conn, v.id); conn.vfShotAt = t; }
+                conn.mode = 'virus gun: launching at ' + G.name + ' (' + G.why + ', ' + G.pressed + ' of ' + G.need + ')';
+                return true;
+            }
+        }
+        // watch: step back off the virus for a few ticks, then let the bot carry on while we see what it did
+        const o = conn.owners.get(G.key), swallowed = o && o.popTick > G.popTick0;
+        if (swallowed && S.tick - o.popTick >= 6) {
+            const ocAfter = S.ownerCount.get(G.key) || 0;
+            gunDone(conn, S, G, ocAfter > G.oc0 ? 'burst' : 'only fed it');
+            return false;
+        }
+        if (t - G.launchedAt > 1800 && !swallowed) { gunDone(conn, S, G, 'missed'); return false; }
+        if (G.backTicks > 0 && mayPop && gapE < CFG.gunStandoff + 120) { G.backTicks--; back(); conn.mode = 'virus gun: launched at ' + G.name + ', stepping back'; return true; }
+        return false;
+    }
+    function stepVirusGun(conn, S) {
+        if (!CFG.virusGun || !CFG.virusShots || !CFG.bot) { conn.gun = null; return false; }
+        const t = now();
+        if (conn.gun) return gunRun(conn, S, conn.gun, t);
+        const hot = conn.gunHeld && t < conn.gunHeld.until;
+        if ((S.tick % 3 && !hot) || !S.viruses.length) return false;
+        const shootersAll = S.mine.filter(c => c.s >= GAME.minEjectSize);
+        if (!shootersAll.length) return false;
+        const src = shootersAll.reduce((a, c) => (c.s > a.s ? c : a));
+        const big = S.mine.reduce((a, c) => (c.s > a.s ? c : a));
+        const strangers = S.enemies.filter(e => e.player && !e.remote && !isAlly(e) && !conn.mateKeys.has(e.key));
+        if (!strangers.length) return false;
+        // the pieces a launch can protect, or that can take what a burst leaves: our biggest and each teammate's biggest
+        const cores = [{ x: big.x, y: big.y, s: big.s, self: true, pieces: S.mine.length, name: 'us' }];
+        for (const m of S.squad) { if (!m.isBot || !m.cells || !m.cells.length || t - m.rx > 1500) continue; const r = m.cells.reduce((a, c) => (c[3] > a[3] ? c : a)), lc = conn.cells.get(r[0]); cores.push({ x: lc ? lc.x : r[1], y: lc ? lc.y : r[2], s: lc ? lc.s : r[3], self: false, pieces: m.cells.length, name: m.name || 'a teammate' }); }
+        let best = null, prime = null;
+        for (const e of strangers) {
+            if (!canEat(e.s, GAME.virusSize * 1.02)) continue;                                                        // too small to swallow one
+            const oc = Math.max(S.ownerCount.get(e.key) || 1, 1), free = CFG.maxCells - oc;
+            if (free <= 0) continue;                                                                                   // rule 2
+            const lg = gunLog.get(e.key); if (lg && (t - lg.t < CFG.gunAgainMs || t < (lg.proofUntil || 0))) continue;   // rules 1 and 7
+            const M = mass(e.s) + 100, parts = popPieces(M, free);
+            let why = '', value = 0, forCore = null, far = null;
+            // rule 5a: it can eat one of our biggest pieces, or split onto it, and it is there or coming
+            for (const k of cores) {
+                const d = Math.hypot(e.x - k.x, e.y - k.y), eats = canEat(e.s, k.s), reach = enemySplitReach(e, k.s, oc);
+                if (!eats && !(reach > -Infinity)) continue;
+                const closing = e.vt >= S.tick - 2 ? ((e.vx || 0) * (k.x - e.x) + (e.vy || 0) * (k.y - e.y)) / (d || 1) : 0;
+                const near = (reach > -Infinity && d < reach + CFG.gunDefGap) || (eats && d - e.s < 700) || (closing > 2 && d < Math.max(reach, 0) + CFG.gunDefFar);
+                const val = mass(k.s) * (k.self ? 1 : 0.7);
+                if (near) { if (val > value) { value = val; why = 'defence'; forCore = k; } }
+                else if (k.self && d < CFG.gunPrimeView && (!far || d < far.d)) far = { d };                           // a threat in view, not here yet: a gun to load
+            }
+            // rule 5b: one of ours can split onto its half / quarter right after, from where it is now
+            if (!why) for (const k of cores) {
+                if (k.pieces >= CFG.maxCells || k.s < GAME.minSplitSize) continue;
+                const halfS = k.s / SQRT2; let take = 0;
+                for (const p of parts) if (p > take && canEat(halfS, Math.sqrt(p * 100) * CFG.eatMargin)) take = p;
+                if (take < Math.max(CFG.gunFoodMin, 0.08 * mass(k.s))) continue;
+                const d = Math.hypot(e.x - k.x, e.y - k.y), rr = splitReach(k.s, Math.sqrt(take * 100), k.pieces, 1);
+                if (!(rr > -Infinity) || d > rr + CFG.gunFoodSlack) continue;
+                if (strangers.some(x => x.key !== e.key && canEat(x.s, halfS) && Math.hypot(x.x - e.x, x.y - e.y) < x.s + 1100)) continue;   // somebody bigger would take it (and our half)
+                if (take > value) { value = take; why = 'food'; forCore = k; }
+            }
+            if (!why && !far) continue;
+            const ep = predict(e, S.L + 10, S.tick);
+            for (const v of S.viruses) {
+                if (v.remote) continue;
+                const dx = v.x - src.x, dy = v.y - src.y, d = Math.hypot(dx, dy) || 1, gapE = d - src.s;             // our edge to its middle
+                if (gapE > CFG.gunRange || gapE < 60) continue;
+                const fed = virusFed(v), need = GAME.virusFeedTimes - fed;
+                const mayPop = S.mine.length < CFG.maxCells && canEat(src.s, v.s);
+                const ang = Math.atan2(dy, dx);
+                // the pieces of ours whose shots reach it must be on one bearing (the last blob to land sets the way it flies)
+                let spread = 0; for (const c of shootersAll) { if (Math.hypot(v.x - c.x, v.y - c.y) - c.s > 860) continue; let a2 = Math.abs(Math.atan2(v.y - c.y, v.x - c.x) - ang); if (a2 > Math.PI) a2 = 2 * Math.PI - a2; if (a2 > spread) spread = a2; }
+                if (spread > 0.25) { if (why) conn.gunWhy = 'our shooting pieces are on different bearings (' + spread.toFixed(2) + ')'; continue; }
+                if (S.mine.some(q => q !== src && segDist(q.x, q.y, src.x, src.y, v.x, v.y) < q.s * 0.8)) { if (why) conn.gunWhy = 'a piece of ours is in the line of fire'; continue; }
+                if (!why) {
+                    // rule 4: a loaded gun. The virus most in line between us and the threat, fed up to 4 (40 mass at most, it stays in the virus)
+                    if (!CFG.gunPrime || fed >= GAME.virusFeedTimes - 1 || shootersAll.length !== 1 || S.myMass < CFG.gunPrimeMinMass || conn.danger > 0.1 * S.myMass + 1) continue;
+                    if (mayPop && gapE < CFG.gunStandoff + (GAME.virusFeedTimes - 1 - fed) * moveSpeed(src.s) + 20) continue;
+                    let off = Math.abs(Math.atan2(e.y - v.y, e.x - v.x) - ang); if (off > Math.PI) off = 2 * Math.PI - off;
+                    if (off > 0.35 || Math.hypot(e.x - v.x, e.y - v.y) > 3000) continue;
+                    if (!prime || off < prime.off) prime = { off, e, v, fed };
+                    continue;
+                }
+                const dVT = Math.hypot(ep.x - v.x, ep.y - v.y);
+                if (dVT > GAME.virusSplitBoost * 0.92 + e.s * 0.6 || dVT < e.s * 0.6 + v.s) { conn.gunWhy = 'target ' + Math.round(dVT) + ' from the virus (launch reaches ' + Math.round(GAME.virusSplitBoost * 0.92 + e.s * 0.6) + ')'; continue; }   // inside the launch, not already on it
+                let off = Math.abs(Math.atan2(ep.y - v.y, ep.x - v.x) - ang); if (off > Math.PI) off = 2 * Math.PI - off;
+                const tol = Math.atan2(Math.max(20, e.s - GAME.virusSize / 3 - 15), dVT);
+                const pHit = Math.max(0, Math.min(0.3, off + tol) - Math.max(-0.3, off - tol)) / 0.6;                  // share of the stray that still lands in it
+                if (pHit < (why === 'defence' ? CFG.gunHitDef : CFG.gunHitFood)) { conn.gunWhy = 'chance to land ' + pHit.toFixed(2) + ' (off ' + off.toFixed(2) + ', ' + Math.round(dVT) + ' away)'; continue; }
+                const cost = need * shootersAll.length * 10;                                                         // rule 3
+                if (cost > Math.max(CFG.gunCostMin, (why === 'defence' ? CFG.gunCostDef : CFG.gunCostFood) * S.myMass)) { conn.gunWhy = 'too dear: ' + cost + ' (' + need + ' presses x ' + shootersAll.length + ' pieces)'; continue; }
+                if (mayPop && gapE < CFG.gunStandoff + need * moveSpeed(src.s)) { conn.gunWhy = 'too close to the virus for ' + need + ' presses (' + Math.round(gapE) + ')'; continue; }   // rule 6: the presses must end with us still off it
+                // inside its split reach onto our shooter only with a virus that is all but loaded (its split lands before a slow launch)
+                if (need > 2 && canEat(e.s / SQRT2, src.s) && Math.hypot(e.x - src.x, e.y - src.y) < Math.max(0, splitReach(e.s, src.s, oc, 1)) + CFG.minePopSafe) continue;
+                const score = value * pHit - cost * 3 - gapE * 0.2 - need * 20;
+                if (score > 0 && (!best || score > best.score)) best = { score, e, v, why, need, fed, pHit, forCore, oc, m0: Math.round(M - 100) };
+            }
+        }
+        if (best) {
+            const G = conn.gun = { phase: 'fire', key: best.e.key, eId: best.e.id, name: best.e.name || 'a player', vid: best.v.id, why: best.why, need: best.need, fed0: best.fed, pressed: 0, press: [], since: t, until: t + 2200,
+                oc0: best.oc, m0: best.m0, sMax: best.v.s, forName: best.forCore.name, forSelf: !!best.forCore.self, popTick0: (conn.owners.get(best.e.key) || {}).popTick || -1e9 };
+            gunLog.set(best.e.key, { t, by: conn.memberId, result: 'pending' });
+            try { teamlog.start(conn, S, 'virus launch (' + best.why + ')', { target: G.name, mass: G.m0, pieces: G.oc0, need: G.need, hit: +best.pHit.toFixed(2) }, '', best.e.key, 6000); } catch (_) { }
+            return gunRun(conn, S, G, t);
+        }
+        // (B) stand and shoot: a hunter coming at US while we mine or stand at the bank, a virus we can get behind in time
+        if (CFG.gunHold && !best && !hot && (CFG.gunHoldAlways || /virus shield/.test(conn.mode || '') || conn.mining || /^crew: (banking|back to the bank|taking)/.test(conn.mode || '') || conn.crewRole === 'banker' || conn.crewRole === 'seed') && shootersAll.length <= 2) {
+            let hb = null;
+            for (const e of strangers) {
+                if (!canEat(e.s, GAME.virusSize * 1.02)) continue;
+                const oc = Math.max(S.ownerCount.get(e.key) || 1, 1); if (oc >= CFG.maxCells) continue;
+                const lg = gunLog.get(e.key); if (lg && (t - lg.t < CFG.gunAgainMs || t < (lg.proofUntil || 0))) continue;
+                const reach = enemySplitReach(e, src.s, oc); if (!canEat(e.s, src.s) && !(reach > -Infinity)) continue;
+                const d = Math.hypot(e.x - src.x, e.y - src.y);
+                const closing = e.vt >= S.tick - 2 ? ((e.vx || 0) * (src.x - e.x) + (e.vy || 0) * (src.y - e.y)) / (d || 1) : 0;
+                if (closing < 1 || d > CFG.gunPrimeView || d < Math.max(reach, 0) + CFG.gunHoldGap + 300) continue;       // coming, in view, and still time to set up
+                for (const v of S.viruses) {
+                    if (v.remote) continue;
+                    const ex = v.x - e.x, ey = v.y - e.y, el = Math.hypot(ex, ey) || 1;
+                    const so = src.s + CFG.gunStandoff + 70, fx = v.x + ex / el * so, fy = v.y + ey / el * so;
+                    const off = Math.hypot(fx - src.x, fy - src.y);
+                    if (off > CFG.gunHoldReach || wallGap(S, { x: fx, y: fy }) < 400) continue;
+                    // the spot must be further from the hunter than we would be anyway, never a step toward it past the virus
+                    if (Math.hypot(fx - e.x, fy - e.y) < el) continue;
+                    if (S.mine.some(q => q !== src && Math.hypot(q.x - v.x, q.y - v.y) < q.s + v.s)) continue;
+                    if (!hb || off < hb.off) hb = { off, e, v, oc };
+                }
+            }
+            if (hb) {
+                conn.gun = { phase: 'hold', key: hb.e.key, eId: hb.e.id, name: hb.e.name || 'a player', vid: hb.v.id, why: 'defence', need: 0, fed0: virusFed(hb.v), pressed: 0, press: [], since: t, until: t + 7000, oc0: hb.oc, m0: Math.round(mass(hb.e.s)), sMax: hb.v.s, forName: 'us', forSelf: true, popTick0: 0 };
+                return gunRun(conn, S, conn.gun, t);
+            }
+        }
+        if (hot && !best) { const hv = conn.cells.get(conn.gunHeld.vid); if (hv && hv.virus) { const sdx = src.x - hv.x, sdy = src.y - hv.y, sdl = Math.hypot(sdx, sdy) || 1; if (sdl - src.s > CFG.gunStandoff) { conn.sendMouse(src.x, src.y); conn.botAim = { x: src.x, y: src.y }; conn.mode = 'virus gun: holding the spot'; return true; } } }
+        if (prime) {
+            conn.gun = { phase: 'prime', key: prime.e.key, eId: prime.e.id, name: prime.e.name || 'a player', vid: prime.v.id, why: 'loading', need: GAME.virusFeedTimes - 1 - prime.fed, fed0: prime.fed, pressed: 0, press: [], since: t, until: t + 900, oc0: 0, m0: 0, sMax: prime.v.s, forName: 'us', forSelf: true, popTick0: 0 };
+            return gunRun(conn, S, conn.gun, t);
+        }
+        return false;
+    }
+    // ---------------------------------------------------------------- the team bank (3.59.3)
+    let crewBank = null;          // { vid, x, y, ux, uy, t0, server, n, nT }: the virus, the way the new ones fly, when it was set up, the pile count
+    let crewBankGone = null;      // { t0, until }: a bank one of us saw was gone (told to the others for 10 s)
+    const bankPile = b => ({ x: b.x + b.ux * GAME.virusSplitBoost, y: b.y + b.uy * GAME.virusSplitBoost });
+    const bankFor = conn => (crewBank && crewBank.server === serverOf(conn.ws) ? crewBank : null);
+    const bankCount = b => { let sh = 0; for (const k in (b.by || {})) sh += b.by[k]; return Math.max(Date.now() - (b.nT || 0) < 30000 ? (b.n || 0) : 0, Math.floor(sh * 0.8 / 5)); };
+    // every tick: is the virus still there (when we can see the spot), and how many are in the pile
+    function crewBankTend(conn, S) {
+        const b = bankFor(conn); if (!b) return null;
+        const vb = conn.viewBox, t = now();
+        const inView = (x, y, m) => vb && x > vb.minX + m && x < vb.maxX - m && y > vb.minY + m && y < vb.maxY - m;
+        if (inView(b.x, b.y, 300)) {
+            let v = conn.cells.get(b.vid);
+            if (!v || !v.virus || Math.hypot(v.x - b.x, v.y - b.y) > 200) { v = null; for (const q of S.viruses) if (!q.remote && Math.hypot(q.x - b.x, q.y - b.y) < 120) { v = q; break; } if (v) b.vid = v.id; }
+            if (!v) { conn.bankMiss = (conn.bankMiss || 0) + 1; if (conn.bankMiss > 12) { crewBankGone = { t0: b.t0, until: t + 10000 }; crewBank = null; conn.bankMiss = 0; hud.flash('the bank virus is gone'); return null; } }
+            else conn.bankMiss = 0;
+        }
+        if (Date.now() - b.t0 > CFG.crewBankMaxMs && bankCount(b) < 3) { crewBankGone = { t0: b.t0, until: t + 10000 }; crewBank = null; return null; }
+        const P = bankPile(b);
+        if (inView(P.x, P.y, 200)) { let k = 0; for (const q of S.viruses) if (!q.remote && Math.hypot(q.x - P.x, q.y - P.y) < CFG.crewBankPileR) k++; b.n = k; b.nT = Date.now(); }
+        return b;
+    }
+    // the biggest bot sets it up: the nearest virus in the open with nobody on it; the new ones fly on from us through it
+    function crewBankPick(conn, S, big) {
+        let best = null, bd = Infinity;
+        const strangers = S.enemies.filter(e => e.player && !e.remote && !isAlly(e) && !conn.mateKeys.has(e.key));
+        for (const v of S.viruses) {
+            if (v.remote || wallGap(S, v) < 1500 || virusBanned(conn, v)) continue;
+            const d = Math.hypot(v.x - big.x, v.y - big.y); if (d > CFG.crewBankPickRange || d >= bd || d < big.s + 200) continue;
+            if (strangers.some(e => Math.hypot(e.x - v.x, e.y - v.y) < e.s + v.s + 500)) continue;
+            bd = d; best = v;
+        }
+        if (!best) return null;
+        let ux = (best.x - big.x) / bd, uy = (best.y - big.y) / bd;
+        const P = { x: best.x + ux * GAME.virusSplitBoost, y: best.y + uy * GAME.virusSplitBoost }, bo = S.border;
+        // (a pile against the border is no use: then they fly toward the middle of the map)
+        if (bo && wallGap(S, P) < 1300) { const mx = (bo.minX + bo.maxX) / 2 - best.x, my = (bo.minY + bo.maxY) / 2 - best.y, ml = Math.hypot(mx, my) || 1; ux = mx / ml; uy = my / ml; }
+        crewBank = { vid: best.id, x: Math.round(best.x), y: Math.round(best.y), ux: +ux.toFixed(4), uy: +uy.toFixed(4), t0: Date.now(), server: serverOf(conn.ws), n: 0, nT: 0, by: {} };
+        hud.flash('bank set up at a virus ' + Math.round(bd) + ' away');
+        return crewBank;
+    }
+    // a whole bot with mass to spare: to its own spot on the shooting side, then walk in firing, step back, again
+    // (a shot always walks us toward the mouse). null = not banking now, false = on the way (steering drives), true = done this tick.
+    function crewBankStep(conn, S, big, b, M) {
+        const st = conn.crewSt || (conn.crewSt = {});
+        const dx = b.x - big.x, dy = b.y - big.y, d = Math.hypot(dx, dy) || 1;
+        if (!st.bank && S.myMass >= CFG.crewBankAt && S.myMass - CFG.crewBankKeep >= Math.max(150, d / 12)) st.bank = true;
+        if (st.bank && (S.myMass < CFG.crewBankKeep || d > CFG.crewBankRange * 1.2)) st.bank = false;
+        if (!st.bank || d > CFG.crewBankRange * 1.2) return null;
+        // a whole teammate that could eat us is at the virus itself (the one about to pop, shooting): wait for it
+        if (M.some(o => !o.self && o.cells.length === 1 && canEat(o.cells[0].s, big.s) && Math.hypot(o.cells[0].x - b.x, o.cells[0].y - b.y) < o.cells[0].s + 700)) return null;
+        // our own side of the line (by the order of our ids): at most one of us each side at a time, the lower id keeps the spot
+        const ids = M.map(o => o.from).sort(), side = o => (ids.indexOf(o) % 2 ? 1 : -1), mySide = side(conn.memberId);
+        if (M.some(o => !o.self && o.m && o.m.crew === 'banker' && side(o.from) === mySide && (!st.banking || o.from < conn.memberId))) { st.banking = false; return null; }
+        const ang = mySide * CFG.crewBankSlot, ca = Math.cos(ang), sa = Math.sin(ang);
+        const ux = b.ux * ca - b.uy * sa, uy = b.ux * sa + b.uy * ca;
+        const cosU = (dx * ux + dy * uy) / d, gapE = d - big.s;
+        const so = big.s + 250, sx = b.x - ux * so, sy = b.y - uy * so;
+        const v = conn.cells.get(b.vid);
+        conn.crewRole = 'banker'; st.banking = true;
+        if (!(cosU > 0.93 && gapE < 800 && v && v.virus)) return travel(conn, S, sx, sy, 'crew: taking ' + Math.round(S.myMass - CFG.crewBankKeep) + ' mass to the bank');
+        if (gapE < CFG.minePileIn) st.bankBack = true; else if (gapE > 620) st.bankBack = false;
+        if (st.bankBack) { const p = { x: big.x - dx / d * 500, y: big.y - dy / d * 500 }; conn.sendMouse(p.x, p.y); conn.botAim = p; conn.mode = 'crew: banking (stepping back)'; return true; }
+        const inPath = CFG.virusGun ? launchPathPlayer(conn, S, big.x, big.y, v) : null;
+        if (inPath) { const p = { x: big.x - dx / d * 300, y: big.y - dy / d * 300 }; conn.sendMouse(p.x, p.y); conn.botAim = p; conn.mode = 'crew: holding the bank shots (' + (inPath.name || 'a player') + ' is where they would land)'; return true; }
+        conn.sendMouse(b.x, b.y); conn.botAim = { x: b.x, y: b.y };   // (3.60.6) aim at it: a mouse on top of us shoots right or backwards
+        conn.sendEject(); markVirusHit(conn, b.vid); conn.vfShotAt = now();
+        b.by = b.by || {}; b.by[conn.memberId] = (b.by[conn.memberId] || 0) + 1;
+        conn.mode = 'crew: banking into the pile (' + Math.round(S.myMass) + ' -> ' + CFG.crewBankKeep + ', about ' + bankCount(b) + ' banked)';
+        return true;
+    }
+    // keep-out discs: teammates in pieces whose cells could eat ours or be eaten by ours (all their pieces, plus a gap)
+    function crewDiscs(conn, S) {
+        const out = [], t = now();
+        if (!CFG.crew || !S.squad.length) return out;
+        let myBig = 0, mySmall = Infinity; for (const c of S.mine) { if (c.s > myBig) myBig = c.s; if (c.s < mySmall) mySmall = c.s; }
+        for (const m of S.squad) {
+            if (!m.isBot || !m.cells || m.cells.length < 2 || t - m.rx > 1500) continue;
+            if (!(m.mining || (m.mass || 0) >= CFG.mineMinMass)) continue;   // only miners: a small teammate is seeded from close up
+            let ob = 0, os = Infinity, cx = 0, cy = 0;
+            const cells = m.cells.map(r => { const lc = conn.cells.get(r[0]); return lc ? { x: lc.x, y: lc.y, s: lc.s } : { x: r[1], y: r[2], s: r[3] }; });
+            for (const c of cells) { if (c.s > ob) ob = c.s; if (c.s < os) os = c.s; cx += c.x; cy += c.y; }
+            if (!canEat(ob, mySmall) && !canEat(myBig, os)) continue;   // nobody can eat anybody: sharing ground is harmless
+            cx /= cells.length; cy /= cells.length;
+            let r = 0; for (const c of cells) r = Math.max(r, Math.hypot(c.x - cx, c.y - cy) + c.s);
+            out.push({ x: cx, y: cy, r: r + CFG.crewKeepOut, name: m.name || 'a teammate', from: m.from });
+        }
+        return out;
+    }
+    // (3.61.4) a leash with a buffer: start back at the line, keep going until 60% of it (one line = in/out every second)
+    function crewLeashed(conn, key, dist, line) {
+        const L = conn.crewLeashOn || (conn.crewLeashOn = {});
+        if (dist > line) L[key] = true; else if (dist < line * 0.6) L[key] = false;
+        return !!L[key];
+    }
+    // ---------------------------------------------------------------- packs (3.63.0)
+    function packInfo(conn, S) {
+        const t = now();
+        const ids = [conn.memberId, ...S.squad.filter(m => m.isBot && t - m.rx < 10000).map(m => m.from)].filter((v, i, a) => v != null && a.indexOf(v) === i).sort((a, b) => (a > b ? 1 : a < b ? -1 : 0));
+        if (ids.length < 2) return null;
+        const half = Math.ceil(ids.length / 2), packOf = id => (ids.indexOf(id) < half ? 0 : 1), mine = packOf(conn.memberId);
+        const members = crewMembers(conn, S).filter(o => packOf(o.from) === mine);
+        if (members.length < 2) return null;
+        let top = members.reduce((a, o) => (o.mass > a.mass ? o : a));
+        const cur = members.find(o => o.from === conn.packMainId);
+        if (cur && cur.mass * CFG.packMainSwitch >= top.mass) top = cur;
+        conn.packMainId = top.from;
+        return { pack: mine, members, main: top };
+    }
+    function stepPack(conn, S) {
+        if (!CFG.packs || !CFG.bot || !CFG.multibox) { conn.packRole = null; return false; }
+        if (S.captain && S.captain.order && S.captain.order.mode !== 'free' && !S.captain.botCarrier) { conn.packRole = null; return false; }
+        const P = packInfo(conn, S);
+        if (!P) { conn.packRole = null; return false; }
+        conn.packId = P.pack;
+        const main = P.main;
+        if (main.self) { conn.packRole = 'main'; conn.packFeeders = P.members.filter(o => !o.self); return false; }
+        conn.packRole = 'feeder'; conn.packFeeders = null;
+        const t = now(), big = S.mine.reduce((a, c) => (c.s > a.s ? c : a));
+        const mBig = main.cells.reduce((a, c) => (c.s > a.s ? c : a));
+        const T = main.cells.reduce((a, c) => (Math.hypot(c.x - big.x, c.y - big.y) - c.s < Math.hypot(a.x - big.x, a.y - big.y) - a.s ? c : a));
+        const gap = Math.hypot(T.x - big.x, T.y - big.y) - T.s - big.s;
+        // the main is in danger: if its biggest piece can swallow all of us, walk straight in (lane clear)
+        const mDanger = main.m && (main.m.danger || 0) > CFG.packDiveDanger * Math.max(1, main.mass);
+        if (mDanger && S.mine.every(c => canEat(mBig.s, c.s * 1.01)) && gap < 3000) {
+            const lane = S.enemies.some(e => e.player && !e.remote && !isAlly(e) && !conn.mateKeys.has(e.key) && canEat(e.s, big.s) && segDist(e.x, e.y, big.x, big.y, mBig.x, mBig.y) < e.s + 200);
+            if (!lane) {
+                conn.squadMerge = true; conn.mergeUntil = t + 600; conn.diveHold = { until: t + 600 };
+                const p = mBig.live ? predict(mBig.live, S.L, S.tick) : { x: mBig.x, y: mBig.y };
+                conn.sendMouse(p.x, p.y); conn.botAim = p;
+                conn.mode = 'pack: jumping into ' + main.name + ' (it is in danger)';
+                if (!conn.packJump || t - conn.packJump > 3000) { conn.packJump = t; try { teamlog.start(conn, S, 'pack jump in', { mate: Math.round(main.mass), mine: Math.round(S.myMass) }, main.key, '', 3000); } catch (e) {} }
+                return true;
+            }
+        }
+        if (conn.escMode) return false;   // our own escape decides
+        // feed the main everything over the keep
+        if (S.myMass - CFG.packKeep > 40 && big.s >= GAME.minEjectSize && gap < CFG.packFeedRange) {
+            const r = crewShootInto(conn, S, T, main.name, 'pack: feeding ' + main.name + ' (' + Math.round(main.mass) + ')');
+            if (r) return true;
+            if (/^crew: closing in/.test(conn.mode || '') || conn.orderTravel && conn.orderTravel.tick === S.tick) { conn.mode = 'pack: closing in to feed ' + main.name; return false; }
+        }
+        // farm near the main, never alone
+        if (crewLeashed(conn, 'pack', gap, CFG.packLeash)) return travel(conn, S, T.x, T.y, 'pack: back to ' + main.name);
+        return false;
+    }
+    function stepCrew(conn, S) {
+        if (!CFG.crew || !CFG.bot || !CFG.multibox) { conn.crewRole = null; return false; }
+        if (now() < (conn.gunChaseUntil || 0)) return false;   // a player we burst is in pieces beside us: the split and the hunt go first
+        if (S.captain && S.captain.order && S.captain.order.mode !== 'free' && !S.captain.botCarrier) { conn.crewRole = null; return false; }   // a human captain's orders win
+        const M = crewMembers(conn, S);
+        if (M.length < 2) { conn.crewRole = null; conn.crewApart = false; return false; }
+        if (M.some(crewIsMiner)) conn.crewApart = false;
+        const me = M[0], others = M.slice(1), c0 = S.center, t = now();
+        const big = S.mine.reduce((a, c) => (c.s > a.s ? c : a));
+        let bank = crewBankTend(conn, S);
+        const nearestCell = (x, from) => { let b = null, bd = Infinity; for (const c of x.cells) { const d = Math.hypot(c.x - from.x, c.y - from.y) - c.s; if (d < bd) { bd = d; b = c; } } return b; };
+        // someone who could eat our biggest piece right on us: the escape logic decides, not the crew
+        if (conn.escMode || conn.danger > 0.35 * S.myMass + 1) { conn.crewRole = 'danger'; return false; }   // (3.61.0) the shared escape state
+        const miners = M.filter(crewIsMiner);
+        if (crewIsMiner(me)) {
+            conn.crewRole = 'miner';
+            const G = conn.crewGive || (conn.crewGive = { to: null, until: 0, rest: 0 });
+            // who gets our mass: a small teammate to seed (we need plenty), else a miner well behind us - whoever a
+            // shot of ours can reach right now
+            const seedTo = Math.max(CFG.crewSeedTo, Math.min(CFG.crewSeedMax, CFG.crewSeedFrac * S.myMass));
+            let to = null, why = '', toT = null;
+            for (const o of others) {
+                const T = nearestCell(o, c0), dC = Math.hypot(o.c.x - c0.x, o.c.y - c0.y);
+                if (!crewIsMiner(o)) { if (S.myMass >= CFG.crewSpreadAt && o.mass < seedTo && dC < CFG.crewDeliverRange && (why !== 'seed' || dC < to.dC)) { to = o; to.dC = dC; why = 'seed'; toT = T; } continue; }
+                if (why === 'seed' || dC > CFG.crewLevelRange) continue;
+                const giving = G.to === o.from;
+                if (S.myMass >= CFG.crewLevelMin && S.myMass > o.mass * (giving ? CFG.crewLevelStop : CFG.crewLevelStart) && (!to || o.mass < to.mass)) { to = o; why = 'level'; toT = T; }
+            }
+            if (to) {
+                if (G.to !== to.from && t >= G.rest) { G.to = to.from; G.until = t + (why === 'seed' ? CFG.crewSeedBurstMs : CFG.crewLevelBurstMs); }
+                if (G.to === to.from) {
+                    if (t <= G.until) {
+                        if (crewShootInto(conn, S, toT, to.name, why === 'seed' ? 'crew: seeding ' + to.name + ' (' + Math.round(to.mass) + ' -> ' + Math.round(seedTo) + ')' : 'crew: levelling with ' + to.name + ' (' + Math.round(S.myMass) + ' / ' + Math.round(to.mass) + ')')) return true;
+                    } else { G.to = null; G.rest = t + CFG.crewRestMs; }
+                }
+            } else if (G.to) G.to = null;
+            // one field: the smaller miners work beside the biggest (its spare viruses are the fastest food there is,
+            // and it can only level with a teammate its shots reach)
+            conn.crewToward = null;
+            let top = me; for (const o of miners) if (o.mass > top.mass) top = o;
+            {
+                // the biggest: don't wander off from the others
+                let cx = 0, cy = 0, k = 0; for (const o of others) { cx += o.c.x; cy += o.c.y; k++; }
+                if (k && Math.hypot(cx / k - c0.x, cy / k - c0.y) > CFG.crewTogether) conn.crewToward = { x: cx / k, y: cy / k, why: 'together' };
+            }
+            void top;
+            return false;   // mining goes on
+        }
+        // ---- not a miner
+        conn.crewToward = null; conn.crewLevelTo = null;
+        if (CFG.crewFeast && (conn.crewFeasting || conn.mining)) { conn.crewRole = 'feasting'; return false; }
+        const st = conn.crewSt || (conn.crewSt = {});
+        if (miners.length) {
+            // the bank is still there (the one about to pop is building it up, or already eating the pile): keep shooting into it
+            if (bank && S.mine.length === 1) { const r = crewBankStep(conn, S, big, bank, M); if (r !== null) return r; }
+            // the miner to work for: one that can seed us if there is one, else the nearest
+            let E = null, es = Infinity;
+            for (const o of miners) { const d = Math.hypot(o.c.x - c0.x, o.c.y - c0.y) - (o.mass >= CFG.crewSpreadAt ? 6000 : 0); if (d < es) { es = d; E = o; } }
+            const T = nearestCell(E, big), d = Math.hypot(T.x - big.x, T.y - big.y), gap = d - T.s - big.s;
+            if (E.mass >= CFG.crewSpreadAt && S.myMass < CFG.crewSeedTo) {
+                conn.crewRole = 'seedling';
+                const eatsAny = E.cells.some(c => S.mine.some(q => canEat(c.s, q.s) && Math.hypot(c.x - q.x, c.y - q.y) - c.s - q.s < 220));
+                if (E.m && E.m.crewGiveTo === conn.memberId) {
+                    // our turn: walk to its nearest piece, stopping short of any piece that could eat us, and eat what lands
+                    // the nearest of its pieces that could eat one of ours: stand in a band just outside it, the shots come to us
+                    let dg = Infinity, dc = null, dq = null;
+                    for (const c of E.cells) for (const q of S.mine) { if (!canEat(c.s, q.s)) continue; const g = Math.hypot(c.x - q.x, c.y - q.y) - c.s - q.s; if (g < dg) { dg = g; dc = c; dq = q; } }
+                    void eatsAny;
+                    if (dc && dg < CFG.crewBandIn) { const dd = Math.hypot(dq.x - dc.x, dq.y - dc.y) || 1, ux = (dq.x - dc.x) / dd, uy = (dq.y - dc.y) / dd; const p = { x: c0.x + ux * 600, y: c0.y + uy * 600 }; conn.sendMouse(p.x, p.y); conn.botAim = p; conn.mode = 'crew: taking a seed from ' + E.name + ' (keeping clear)'; return true; }
+                    if ((dc ? dg : gap) > CFG.crewBandOut) { conn.sendMouse(T.x, T.y); conn.botAim = { x: T.x, y: T.y }; conn.mode = 'crew: taking a seed from ' + E.name + ' (closing in)'; return true; }
+                    // in the band: a blob that landed beside us on our own side, else stand
+                    let fb = null, fd = 260; for (const f of S.food) { if (!f.eject) continue; const q = Math.hypot(f.x - big.x, f.y - big.y); if (q < fd && (!dc || Math.hypot(f.x - dc.x, f.y - dc.y) - dc.s > CFG.crewBandIn)) { fd = q; fb = f; } }
+                    const p = fb ? { x: fb.x, y: fb.y } : { x: big.x, y: big.y };
+                    conn.sendMouse(p.x, p.y); conn.botAim = p; conn.mode = 'crew: taking a seed from ' + E.name;
+                    return true;
+                }
+                // not our turn yet: stay near it and glean what it missed (normal steering eats the blobs)
+                if (crewLeashed(conn, 'seed', gap, CFG.crewLeash)) return travel(conn, S, T.x, T.y, 'crew: going to ' + E.name + ' for a seed');
+                return false;
+            }
+            conn.crewRole = 'feeder';
+            if (E.mass < CFG.mineKeepMass * 1.15) {
+                if (!st.on && S.myMass >= CFG.crewFeedAt) st.on = true;
+                if (st.on && S.myMass < CFG.crewKeep) st.on = false;
+                if (st.on) {
+                    if (gap > 2600) return travel(conn, S, T.x, T.y, 'crew: bringing ' + Math.round(S.myMass) + ' mass to ' + E.name);
+                    if (crewShootInto(conn, S, T, E.name, 'crew: feeding ' + E.name + ' (under the floor)')) return true;
+                }
+            }
+            if (crewLeashed(conn, 'stay', gap, CFG.crewLeash)) return travel(conn, S, T.x, T.y, 'crew: staying by ' + E.name);
+            if (false && gap < CFG.crewClear) { const ux = (big.x - E.c.x) / (Math.hypot(big.x - E.c.x, big.y - E.c.y) || 1), uy = (big.y - E.c.y) / (Math.hypot(big.x - E.c.x, big.y - E.c.y) || 1); return travel(conn, S, big.x + ux * 900, big.y + uy * 900, 'crew: keeping clear of ' + E.name + "'s field"); }
+            return false;
+        }
+        // ---- gather: nobody mines yet. The biggest of us is the seed (lowest id on a tie).
+        let seed = me; for (const o of others) if (o.mass > seed.mass * 1.02 || (Math.abs(o.mass - seed.mass) <= seed.mass * 0.02 && o.from < seed.from)) seed = o;
+        // (keep the one we chose unless another is clearly ahead: no swapping roles back and forth)
+        const cur = M.find(o => o.from === conn.crewSeedFrom);
+        if (cur && seed !== cur && seed.mass < cur.mass * 1.25) seed = cur;
+        conn.crewSeedFrom = seed.from;
+        // the whole team's mass, wherever it is: under the meeting weight everyone grazes on its own ground
+        let total = 0; for (const o of M) total += o.mass;
+        // (3.59.3, any number of bots) who comes: the nearest teammates whose spare mass covers what the biggest lacks
+        // (with a little over for the walk), no more - with eight bots "everyone to the biggest" was a crowd on one patch
+        const lack = CFG.mineMinMass * CFG.crewPourAt - seed.mass;
+        const helpers = new Set();
+        if (lack > 0) {
+            const cand = M.filter(o => o !== seed).map(o => ({ o, d: Math.hypot(o.c.x - seed.c.x, o.c.y - seed.c.y), spare: o.mass })).filter(x => x.spare > 110).sort((a, b) => a.d - b.d);
+            let acc = 0; const picked = [];
+            for (const x of cand) { if (acc >= lack * 1.1) break; picked.push(x.o); acc += x.spare; }
+            if (acc >= lack) for (const o of picked) helpers.add(o.from);
+        }
+        const meetNow = seed.self ? helpers.size > 0 : helpers.has(conn.memberId);
+        // (held a moment so one tick's change of mind doesn't turn anyone round)
+        if (meetNow) conn.crewMeetAt = t;
+        conn.crewMeet = meetNow || t - (conn.crewMeetAt || -1e9) < 10000;   // (3.60.5: 1.5 s let nine bots flip in and out every tick)
+        conn.crewApart = seed.self || !conn.crewMeet;
+        // the bots close enough to pour within a few seconds, and what they weigh together
+        let pool = seed.mass, close = 1; for (const o of M) if (o !== seed && helpers.has(o.from) && Math.hypot(o.c.x - seed.c.x, o.c.y - seed.c.y) < CFG.crewPourRange) { pool += o.mass; close++; }
+        // (not while the one taking it is under threat: it has to stand still for it)
+        const seedDanger = seed.self ? (conn.danger || 0) : ((seed.m && seed.m.danger) || 0);
+        const pour = conn.crewMeet && seed.mass < CFG.mineMinMass && close >= 2 && pool >= CFG.mineMinMass * CFG.crewPourAt && seedDanger < 0.12 * seed.mass + 1;
+        conn.crewPour = pour;
+        // THE BANK: the biggest sets it up; the others shoot what they can spare into it (a pour to finish the line
+        // comes first only when the biggest is far under it, or the pile is already big)
+        if (seed.self && !bank && S.mine.length === 1 && (pour || S.myMass >= CFG.mineMinMass * CFG.crewBankFrom)) bank = crewBankPick(conn, S, big);
+        if (!seed.self && bank && S.mine.length === 1 && !(helpers.has(conn.memberId) && seed.mass < CFG.mineMinMass)) {
+            const r = crewBankStep(conn, S, big, bank, M); if (r !== null) return r;
+        }
+        // the one that will pop keeps near the shooting side of the bank (never where the new viruses land), closer as it nears the line
+        const bankBusy = M.some(o => !o.self && o.m && o.m.crew === 'banker');
+        const waitAtBank = () => { if (!bankBusy) return false; const wx = bank.x - bank.ux * CFG.crewBankWait, wy = bank.y - bank.uy * CFG.crewBankWait, leash = S.myMass >= CFG.mineMinMass * CFG.nearMineFrac ? 800 : 2500;
+            return Math.hypot(wx - c0.x, wy - c0.y) > leash ? travel(conn, S, wx, wy, 'crew: back to the bank (about ' + bankCount(bank) + ' viruses banked)') : false; };
+        if (!conn.crewMeet) {
+            conn.crewRole = 'grazing';
+            if (seed.self && bank && S.myMass >= CFG.crewBankSeedMin) return waitAtBank();
+            // a teammate in our patch: step away from it; far from the biggest: drift back toward it
+            let nx = 0, ny = 0, crowd = false;
+            let nearest = Infinity;
+            for (const o of others) { const dx = c0.x - o.c.x, dy = c0.y - o.c.y, dd = Math.hypot(dx, dy) || 1; if (dd < nearest) nearest = dd; if (dd < CFG.crewApartMin) { nx += dx / dd; ny += dy / dd; crowd = true; } }
+            if (nearest < CFG.crewApartMin * 0.7) conn.crewSpreading = true; else if (nearest > CFG.crewApartMin * 1.2) conn.crewSpreading = false;
+            if (false && crowd && conn.crewSpreading && !conn.sr && conn.danger < 0.1 * S.myMass + 1) { const nl = Math.hypot(nx, ny) || 1; return travel(conn, S, c0.x + nx / nl * 1200, c0.y + ny / nl * 1200, 'crew: grazing apart (' + Math.round(total) + ' between ' + M.length + ' of us)'); }
+            if (!seed.self && crewLeashed(conn, 'apart', Math.hypot(seed.c.x - c0.x, seed.c.y - c0.y), CFG.crewApartMax)) return travel(conn, S, seed.c.x, seed.c.y, 'crew: grazing back toward ' + seed.name);
+            return false;
+        }
+        if (seed.self) {
+            conn.crewRole = 'seed';
+            // start beside a virus in the open: the pour should end with one in reach
+            if (!pour && S.myMass < CFG.mineMinMass) {
+                if (bank) return waitAtBank();
+                let nv = null, nd = Infinity;
+                for (const v of S.viruses) { if (wallGap(S, v) < 1500) continue; const q = Math.hypot(v.x - c0.x, v.y - c0.y); if (q < nd) { nd = q; nv = v; } }
+                if (nv && nd > 1400 && nd < 7000) return travel(conn, S, nv.x, nv.y, 'crew: heading for a virus to start at');
+            }
+            if (pour) {
+                // (3.60.5) never stand still for it: keep farming; the feeders lead their shots onto where we will be
+                conn.crewRole = 'seed (taking the pour)';
+                return false;
+            }
+            return false;
+        }
+        conn.crewRole = 'feeder';
+        const T = seed.cells.reduce((a, c) => (c.s > a.s ? c : a)), d = Math.hypot(T.x - big.x, T.y - big.y), gap = d - T.s - big.s;
+        if (pour && Math.hypot(c0.x - seed.c.x, c0.y - seed.c.y) < CFG.crewPourRange) {
+            // everything goes in: shots until it can eat every piece of ours, then we walk in (all of our mass arrives; we come
+            // back from the respawn). At most once per 45 s per bot: live, with launches failing, the same bot walked in, came
+            // back and walked in again every few seconds (648 deaths in three hours); in between it is shots only and we live.
+            if (S.myMass >= CFG.crewDiveMinMass && S.mine.every(c => canEat(T.s, c.s * 1.01)) && t - (conn.crewDiveAt || -1e9) > CFG.crewDiveEveryMs) conn.crewDiving = t;
+            if (conn.crewDiving && t - conn.crewDiving < 4000 && S.mine.every(c => canEat(T.s, c.s * 1.01))) {
+                conn.crewDiveAt = t; conn.squadMerge = true; conn.mergeUntil = t + 400;
+                conn.sendMouse(T.x, T.y); conn.botAim = { x: T.x, y: T.y };
+                conn.mode = 'crew: diving into ' + seed.name + ' to start the mining (' + Math.round(pool) + ' between us)';
+                return true;
+            }
+            if (crewShootInto(conn, S, T, seed.name, 'crew: pouring into ' + seed.name + ' (' + Math.round(pool) + ' between us)')) return true;
+        }
+        if (crewLeashed(conn, 'gather', gap, CFG.crewGraze)) return travel(conn, S, T.x, T.y, 'crew: gathering at ' + seed.name);
+        return false;
+    }
     function stepMine(conn, S) {
         if (!CFG.virusFarm || !CFG.bot) { conn.mining = null; return false; }
+        if (now() < (conn.gunChaseUntil || 0)) return false;
         if (ordered(S) && S.captain.order.mode !== 'farm') { conn.mining = null; return false; }
         const c0 = S.center, t = now(), big = S.mine.reduce((a, c) => (c.s > a.s ? c : a));
-        const line = conn.mining ? CFG.mineKeepMass : CFG.mineMinMass;
-        const viruses = S.viruses.filter(v => !v.remote && Math.hypot(v.x - c0.x, v.y - c0.y) < CFG.mineRange && wallGap(S, v) > 300);
-        const blobs = conn.mining && conn.mining.sweepGaveUp ? [] : S.food.filter(f => f.eject && f.color === conn.myColor && Math.hypot(f.x - c0.x, f.y - c0.y) < 2500);
+        if (CFG.mineYieldWhole && conn.escMode && S.mine.length <= 2) return false;
+        { const pe = popEater(conn, S); if (pe) { conn.popHeld = pe.name || 'a player'; return false; } }   // (3.63.1) not popping in front of a big player   // (3.62.0) whole and hunted: run first, mine after
+        // THE ONE EXCEPTION to the 2,300 line (the user, 2026-11-13): in a teammate miner's field of spare viruses the line drops - they are food the team already paid for
+        const feast = CFG.crewFeast && CFG.crew && S.myMass >= CFG.crewFeastMin * (conn.mining ? 0.6 : 1) && S.squad.some(m => m.isBot && m.cells && m.cells.length >= 4 && (m.mining || (m.mass || 0) >= CFG.mineMinMass) && Math.hypot(memberCenter(m).x - S.center.x, memberCenter(m).y - S.center.y) < CFG.crewFeastRange) &&
+            S.viruses.filter(v => !v.remote && Math.hypot(v.x - S.center.x, v.y - S.center.y) < CFG.mineRange).length >= (conn.mining ? 3 : CFG.crewFeastViruses);
+        conn.crewFeasting = !!feast && S.myMass < CFG.mineMinMass;
+        const line = feast ? CFG.crewFeastMin * 0.6 : conn.mining ? CFG.mineKeepMass : CFG.mineMinMass;
+        // (banned ones stay out: the "parked beside it, move on" ban was never checked, so it picked the same virus again)
+        const viruses = S.viruses.filter(v => !v.remote && Math.hypot(v.x - c0.x, v.y - c0.y) < CFG.mineRange && wallGap(S, v) > 300 && !virusBanned(conn, v));
+        // (the user, 2026-10-29) not a virus with another player in the way or right beside it: they eat our shots (we
+        // feed them), the new virus and our sweep go to them, and walking to it walks us into them
+        const strangers = S.enemies.filter(e => e.player && !e.remote && !isAlly(e) && !conn.mateKeys.has(e.key));
+        const blockedBy = v => strangers.find(e => segDist(e.x, e.y, c0.x, c0.y, v.x, v.y) < e.s + CFG.mineLaneClear || Math.hypot(e.x - v.x, e.y - v.y) < e.s + v.s + CFG.mineVirusClear) || (CFG.virusGun ? launchPathPlayer(conn, S, c0.x, c0.y, v) : null);
+        const blobs = (conn.mining && conn.mining.sweepGaveUp) || t < (conn.sweepOffUntil || 0) ? [] : S.food.filter(f => f.eject && f.color === conn.myColor && Math.hypot(f.x - c0.x, f.y - c0.y) < 2500);
         // our blobs on the floor are still ours (we sweep them up): count them, so our own shooting can't end the run
         const floor = blobs.reduce((a, f) => a + mass(f.s), 0), eff = S.myMass + floor;
-        if (eff < line || (!viruses.length && blobs.length < 3)) { if (conn.mining) hud.flash('mining: done' + (S.myMass < line ? ' (under ' + line + ')' : ' (field empty)')); conn.mining = null; return false; }
+        // OUR viruses (3.55.0): every 5 hits launch a new 100-mass virus 880 on. Those are our mass (50 in, 100 out) and
+        // on the real rules the bot made more than it ate: one test run left 85 on the field (8,500 mass), another
+        // stopped at the floor with 41 around it. A virus that first appears while we are firing is ours (60 s).
+        const myVir = conn.myVir || (conn.myVir = new Map());
+        { const seen = conn.mineSeen && S.tick - (conn.mineSeenTick || 0) <= 3 ? conn.mineSeen : null, cur = new Set();
+          const firing = conn.mining && conn.mining.shotAt && t - conn.mining.shotAt < 2000;
+          for (const v of S.viruses) { if (v.remote) continue; cur.add(v.id); const o = myVir.get(v.id); if (o) { o.x = v.x; o.y = v.y; } else if (seen && firing && !seen.has(v.id)) myVir.set(v.id, { t, x: v.x, y: v.y }); }
+          conn.mineSeen = cur; conn.mineSeenTick = S.tick;
+          // gone: too old, or we are standing where it was and it isn't there (someone ate it)
+          for (const [id, o] of myVir) if (t - o.t > CFG.mineOursMs || (!cur.has(id) && Math.hypot(o.x - c0.x, o.y - c0.y) < 700)) myVir.delete(id); }
+        // the team's bank is ours too, once we are over the line: the virus we all shoot and the pile it made (they stay ours after the bank is gone)
+        const bk = bankFor(conn), bkP = bk ? bankPile(bk) : null;
+        if (bk && (S.myMass >= CFG.mineMinMass || conn.mining)) for (const v of S.viruses) { if (v.remote || myVir.has(v.id)) continue; if (v.id === bk.vid || Math.hypot(v.x - bkP.x, v.y - bkP.y) < CFG.crewBankPileR) myVir.set(v.id, { t, x: v.x, y: v.y }); }
+        // KEEP AN EATER (3.59.0). Every piece of size 100+ shoots on a press, so a young miner (2-3k in 16 pieces) shoots
+        // all its pieces down to ~125 together - and a piece needs 1.14x a virus's size to eat it (130 mass; 181 for one
+        // that was fed four times). Then nobody can eat what we made: live-like sim, 130 s at the floor beside 140 of our
+        // own viruses. Shooting is lossless and any piece eats a blob, so with no piece able to eat a fed virus the
+        // presses go into our own biggest piece (mouse on it: every piece walks to it and shoots into it) until it can.
+        {
+            const fedS = GAME.virusSize * 1.18 * 1.02;
+            const lowOk0 = feast || S.mine.length >= CFG.maxCells || eff >= CFG.mineHarvestMinMass;
+            const noEater = !S.mine.some(c => canEat(c.s, fedS));
+            const headShare = CFG.mineHeadShare * Math.max(0, Math.min(1, (CFG.mineHeadBelow - S.myMass) / (CFG.mineHeadBelow * 0.42)));   // full under ~3,500, none at mineHeadBelow
+            const lightHead = headShare > 0.05 && mass(big.s) < headShare * S.myMass;
+            const H = conn.mineHead || (conn.mineHead = { on: false });
+            // (start under the share, stop once the head is there: no flicker at the line)
+            if (noEater || (lightHead && mass(big.s) < headShare * 0.8 * S.myMass)) H.on = true; else if (!lightHead && !noEater) H.on = false;
+            if (H.on && lowOk0 && S.mine.length >= 3 && S.viruses.some(v => !v.remote && wallGap(S, v) > 300 && Math.hypot(v.x - c0.x, v.y - c0.y) < 3000)) {
+                const givers = S.mine.filter(c => c !== big && c.s >= GAME.minEjectSize && Math.hypot(c.x - big.x, c.y - big.y) - c.s - big.s < 900);
+                // (3.59.9, live: a 1,391 bot stood still shooting into its own head with a teamer on top of it, danger 16,581)
+                // a stranger that could eat one of our pieces is close: the head runs and the pieces BEHIND it shoot forward into it while
+                // running (consolidating is what a threat should trigger - standing still for it is not); none behind: the escape decides
+                const hunter = S.enemies.filter(e => e.player && !e.remote && !conn.mateKeys.has(e.key) && !isAlly(e) && S.mine.some(c => canEat(e.s, c.s)) && Math.hypot(e.x - big.x, e.y - big.y) - e.s < 1400).sort((a, b) => Math.hypot(a.x - big.x, a.y - big.y) - Math.hypot(b.x - big.x, b.y - big.y))[0];
+                if (givers.length && hunter) {
+                    const hx = big.x - hunter.x, hy = big.y - hunter.y, hl = Math.hypot(hx, hy) || 1, ux = hx / hl, uy = hy / hl;
+                    const behind = givers.filter(c => (c.x - big.x) * ux + (c.y - big.y) * uy < 0);
+                    if (!behind.length) { H.on = false; return false; }
+                    if (!conn.mining) conn.mining = { since: t, launched: 0 };
+                    const p = { x: big.x + ux * 600, y: big.y + uy * 600 };
+                    conn.sendMouse(p.x, p.y); conn.botAim = p;
+                    if (behind.some(c => Math.hypot(c.x - big.x, c.y - big.y) - c.s - big.s < 420)) conn.sendEject();
+                    conn.mode = 'mining: running from ' + (hunter.name || 'a player') + ', pieces shooting into the head';
+                    return true;
+                }
+                if (givers.length) {
+                    if (!conn.mining) conn.mining = { since: t, launched: 0 };
+                    let gx = 0, gy = 0; for (const c of givers) { gx += c.x - big.x; gy += c.y - big.y; } const gl = Math.hypot(gx, gy) || 1;
+                    const hp = { x: big.x + gx / gl * (moveSpeed(big.s) * 4 + 60), y: big.y + gy / gl * (moveSpeed(big.s) * 4 + 60) };   // (3.60.6) far enough that the head's own shot goes toward them, not off to the side
+                    conn.sendMouse(hp.x, hp.y); conn.botAim = hp;
+                    if (givers.some(c => Math.hypot(c.x - big.x, c.y - big.y) - c.s - big.s < 420)) conn.sendEject();
+                    conn.mode = 'mining: shooting into our biggest piece (' + (noEater ? 'none can eat a virus yet' : 'a young miner keeps a heavy head') + ')';
+                    return true;
+                }
+                H.on = false;   // nobody left who can give: carry on
+            }
+        }
+        // (3.61.1) THE WAY WE WANT THE FIELD TO GO: away from players that could eat our median piece (nearer = stronger), toward the
+        // team, off the border, else straight on. The virus we shoot decides where its new viruses fly, so we steer by choosing it.
+        const mineWay = (() => {
+            const med = S.mine.map(c => c.s).sort((a, b) => a - b)[S.mine.length >> 1];
+            let wx = 0, wy = 0;
+            let hx0 = 0, hy0 = 0; for (const c of S.mine) if (c.vt >= S.tick - 2) { const m = c.s * c.s; hx0 += (c.vx || 0) * m; hy0 += (c.vy || 0) * m; }
+            const hl0 = Math.hypot(hx0, hy0); if (hl0 > 1e-6) { wx += hx0 / hl0; wy += hy0 / hl0; }
+            for (const e of S.enemies) {
+                if (!e.player || conn.mateKeys.has(e.key) || isAlly(e) || !canEat(e.s, med)) continue;
+                const dx = c0.x - e.x, dy = c0.y - e.y, d = Math.hypot(dx, dy) || 1, gap = d - e.s;
+                if (gap > 3500) continue;
+                const w = 2.5 * (1 - Math.max(0, gap) / 3500);
+                wx += dx / d * w; wy += dy / d * w;
+            }
+            if (conn.crewToward) { const tx = conn.crewToward.x - c0.x, ty = conn.crewToward.y - c0.y, tl = Math.hypot(tx, ty) || 1; if (tl > 1800) { wx += tx / tl; wy += ty / tl; } }
+            if (S.border && wallGap(S, c0) < CFG.mineWallShy) { const mx = (S.border.minX + S.border.maxX) / 2 - c0.x, my = (S.border.minY + S.border.maxY) / 2 - c0.y, ml = Math.hypot(mx, my) || 1; const w = 2 * (1 - wallGap(S, c0) / CFG.mineWallShy); wx += mx / ml * w; wy += my / ml * w; }
+            const wl = Math.hypot(wx, wy); return wl > 1e-6 ? { x: wx / wl, y: wy / wl } : null;
+        })();
+        conn.mineWay = mineWay;
+        const discs = crewDiscs(conn, S);
+        let myR = 0; for (const c of S.mine) myR = Math.max(myR, Math.hypot(c.x - c0.x, c.y - c0.y) + c.s);
+        const inDisc = p => discs.some(q => Math.hypot(p.x - q.x, p.y - q.y) < q.r + Math.min(myR, 1000));
+        {
+            let worst = null, wd = 0;
+            for (const q of discs) { const over = q.r + myR * 0.8 - Math.hypot(c0.x - q.x, c0.y - q.y); if (over > wd) { wd = over; worst = q; } }
+            if (worst && eff >= CFG.mineKeepMass) {
+                const dx = c0.x - worst.x, dy = c0.y - worst.y, dl = Math.hypot(dx, dy) || 1;
+                const p = { x: c0.x + dx / dl * 900, y: c0.y + dy / dl * 900 };
+                if (!conn.mining) conn.mining = { since: t, launched: 0 };
+                conn.sendMouse(p.x, p.y); conn.botAim = p; conn.mining.target = 0;
+                conn.mode = 'mining: moving our pieces clear of ' + worst.name + "'s";
+                return true;
+            }
+            if (discs.length) { for (let i = viruses.length - 1; i >= 0; i--) if (inDisc(viruses[i])) viruses.splice(i, 1); }
+        }
+        const canEatV = S.mine.some(c => canEat(c.s, GAME.virusSize));
+        const prod = CFG.mineHarvest ? S.viruses.filter(v => !v.remote && (myVir.has(v.id) || (feast && Math.hypot(v.x - c0.x, v.y - c0.y) < CFG.mineRange)) && wallGap(S, v) > 300 && S.mine.some(c => canEat(c.s, v.s)) && !inDisc(v)) : [];
+        // ...and the ones we made that are out of sight now (they stay where they landed)
+        const far = CFG.mineHarvest && canEatV ? [...myVir.entries()].filter(([id, o]) => !conn.mineSeen.has(id) && Math.hypot(o.x - c0.x, o.y - c0.y) < CFG.mineBackRange).map(([id, o]) => o) : [];
+        // under the floor our own viruses are still worth going for only while eating one can't break us into crumbs:
+        // already at the piece limit (no pop), or with enough mass that the pieces can still eat (the user's floor:
+        // below it a virus is not food - live 3.55.4 a 1,176 bot in 2 pieces was still "mining" on remembered ones)
+        const lowOk = feast || S.mine.length >= CFG.maxCells || eff >= CFG.mineHarvestMinMass;
+        const owned = eff >= CFG.mineKeepMass || lowOk ? prod.length + far.length : 0;
+        if (!owned) { prod.length = 0; far.length = 0; }
+        // big enough to mine and nothing in reach: walk to the nearest virus any of us can see (it used to stand about
+        // in 16 pieces, decaying, with viruses a screen away)
+        const wallPen = p => { const g = wallGap(S, p); return g < CFG.mineWallShy ? (CFG.mineWallShy - g) * CFG.mineWallShyK : 0; };
+        const sweepWorth = blobs.length >= 3 && floor >= CFG.mineSweepFrac * S.myMass;
+        if (CFG.mineSeek && !owned && eff >= line && !viruses.length && !sweepWorth) {
+            let nv = null, nd = Infinity;
+            for (const v of S.viruses) { if (wallGap(S, v) <= 300 || virusBanned(conn, v) || inDisc(v)) continue; const d = Math.hypot(v.x - c0.x, v.y - c0.y) + wallPen(v); if (d < nd && d < CFG.mineSeekRange) { nd = d; nv = v; } }
+            if (conn.mining) conn.mining = null;
+            if (conn.crewToward && conn.crewToward.why === 'field') return travel(conn, S, conn.crewToward.x, conn.crewToward.y, 'mining: over to our biggest miner (its field has viruses to spare)');
+            if (nv) return travel(conn, S, nv.x, nv.y, 'mining: heading to the next virus');
+            // none of us sees one: the middle of the map is where the most of it is in view
+            const b = S.border; if (b) return travel(conn, S, (b.minX + b.maxX) / 2, (b.minY + b.maxY) / 2, 'mining: looking for a virus');
+        }
+        if (!owned && (eff < line || (!viruses.length && !sweepWorth))) { if (conn.mining) hud.flash('mining: done' + (S.myMass < line ? ' (under ' + line + ')' : ' (field empty)')); conn.mining = null; return false; }
         // a player that could eat one of our pieces, within half a viewport: stop (launch a virus into it first if lined up)
         const vb = S.conn.viewBox; const half = (vb ? Math.min(vb.maxX - vb.minX, vb.maxY - vb.minY) : 3000) / 2;
-        const small = S.mine.reduce((a, c) => Math.min(a, c.s), Infinity);
+        const small = mass(big.s) >= 0.4 * S.myMass ? big.s : S.mine.reduce((a, c) => Math.min(a, c.s), Infinity);
         // ('scaled half the viewport TOWARDS us': it has to be coming at us, or already right on top of the field)
         const foe = S.enemies.find(e => { if (!e.player || e.remote || isAlly(e) || conn.mateKeys.has(e.key) || !canEat(e.s, small)) return false;
             const dx = c0.x - e.x, dy = c0.y - e.y, d = Math.hypot(dx, dy) || 1, gap = d - e.s;
@@ -2300,19 +3594,236 @@
             return gap < 900 || (gap < half && closing); });
         if (!conn.mining) { conn.mining = { since: t, launched: 0 }; hud.flash('mining: ' + viruses.length + ' viruses in reach'); }
         const M = conn.mining;
-        if (foe) {
+        // MINE AWAY (3.55.2). Live 2026-11-10: a 22k player walked 3000 units straight into our 4.7k miner (16 pieces,
+        // "firing") and ate it; in the sim a 22k hunter kills the miner in 5 runs of 8. Mining never STOPS for a player
+        // (the user's rule) - it MOVES: with someone who can eat our pieces inside its split reach (or closing on it),
+        // only viruses on the far side are targets, and with none there we walk the field away from it. Our pieces are
+        // ~2.7x faster than a player that size, and our own shots launch the new viruses ahead of us, away from it.
+        let away = null;
+        if (CFG.mineAway) {
+            // (3.59.1) with a heavy head the head is what a threat has to be able to eat: crumbs are cheap
+            const med = mass(big.s) >= 0.4 * S.myMass ? big.s : S.mine.map(c => c.s).sort((a, b) => a - b)[S.mine.length >> 1];
+            let worst = -Infinity;
+            for (const e of S.enemies) {
+                if (!e.player || isAlly(e) || conn.mateKeys.has(e.key) || !canEat(e.s, med)) continue;
+                const dx = c0.x - e.x, dy = c0.y - e.y, d = Math.hypot(dx, dy) || 1, gap = d - e.s;
+                const reach = Math.max(0, enemySplitReach(e, med, S.ownerCount.get(e.key) || 1));
+                const closing = (e.remote || e.vt >= S.tick - 2) ? ((e.vx || 0) * dx + (e.vy || 0) * dy) / d : 0;
+                // only one that is COMING (or already close): a big player sitting in plain view a screen away is no
+                // reason to leave a field (the user; sim scene 'mines': 4160 -> 2669 when it counted those too)
+                const st = (conn.awayMem || (conn.awayMem = new Map())).get(e.key) || 0;
+                const coming = closing > CFG.mineAwayClosing || t - st < 1500;
+                if (closing > CFG.mineAwayClosing) conn.awayMem.set(e.key, t);
+                const lim = gap < CFG.mineAwayHard ? Infinity : coming ? reach + CFG.mineAwayGap : -1;
+                if (d < lim && (gap < CFG.mineAwayHard ? 1e6 - gap : lim - d) > worst) { worst = gap < CFG.mineAwayHard ? 1e6 - gap : lim - d; away = { e, ux: dx / d, uy: dy / d, d, reach }; }
+            }
+        }
+        // POP THEM (the user, 2026-11-10: "we can shoot viruses at other players to pop them - we don't win by running
+        // away, we win by attacking and taking"). A miner stands in a field of viruses: every one is a loaded gun. A new
+        // virus flies 880 from the fed one along the shot. For every player under the piece limit who is big enough to
+        // pop and either can eat our pieces or would break into pieces WE can eat: a virus with it inside launch range,
+        // and one of our shooters behind that virus on the line -> fire through the virus at it. No cap on launches.
+        // Its pieces then can't merge for 30 s: the smart split and the hunt take them.
+        if (CFG.minePop && !CFG.virusGun && eff >= CFG.mineKeepMass && t >= (M.popHoldUntil || 0)) {
+            const med0 = S.mine.map(c => c.s).sort((a, b) => a - b)[S.mine.length >> 1];
+            const shooters = S.mine.filter(c => c.s >= GAME.minEjectSize);
+            let best = null;
+            for (const e of S.enemies) {
+                if (!e.player || e.remote || isAlly(e) || conn.mateKeys.has(e.key) || !canEat(e.s, GAME.virusSize)) continue;
+                const oc = S.ownerCount.get(e.key) || 1; if (oc >= CFG.maxCells) continue;
+                const pieceS = e.s / Math.sqrt(Math.max(2, CFG.maxCells - oc + 1));
+                // (takeable = our MEDIAN piece eats its pieces: with only our biggest able to, a popped 6k became 16 fast eaters of our small ones)
+                const threat = canEat(e.s, med0), food = canEat(med0, pieceS * CFG.eatMargin);
+                // (sim: popping a giant whose pieces still eat ours cost the miner a third of its mass - only ones we can TAKE)
+                if (!food && (CFG.minePopNeedFood || !threat)) continue;
+                if (!threat && mass(e.s) < Math.max(CFG.minePopMinMass, CFG.minePopMinFrac * S.myMass)) continue;   // (3.59.2) not worth the shots
+                const ep = predict(e, S.L + 12, S.tick);
+                for (const v of S.viruses) {
+                    if (v.remote) continue;
+                    const dVT = Math.hypot(ep.x - v.x, ep.y - v.y);
+                    if (dVT > GAME.virusSplitBoost * 0.92 + e.s * 0.8 || dVT < e.s + v.s) continue;      // in launch range, not already on it
+                    const ux = (ep.x - v.x) / dVT, uy = (ep.y - v.y) / dVT;
+                    for (const c of shooters) {
+                        const dx = v.x - c.x, dy = v.y - c.y, d = Math.hypot(dx, dy) || 1, gapV = d - c.s - v.s;
+                        if (gapV > CFG.minePopRange || gapV < -20) continue;
+                        // from outside its split reach only: inside it, its split lands before our virus does
+                        if (threat && Math.hypot(e.x - c.x, e.y - c.y) < Math.max(0, splitReach(e.s, c.s, oc, 1)) + CFG.minePopSafe) continue;
+                        // where the launched virus ends up if it flies along our shot: how far that passes from the player
+                        const along = (ep.x - v.x) * dx / d + (ep.y - v.y) * dy / d, miss = Math.abs((ep.x - v.x) * dy / d - (ep.y - v.y) * dx / d);
+                        if (along <= 0 || miss > e.s * 0.75) continue;
+                        // nothing of ours in the shot's way (our own pieces eat the blobs)
+                        if (S.mine.some(q => q !== c && segDist(q.x, q.y, c.x, c.y, v.x, v.y) < q.s * 0.8)) continue;
+                        const fed = Math.max(0, Math.min(GAME.virusFeedTimes - 1, Math.round((v.s * v.s - GAME.virusSize ** 2) / 1000)));
+                        const score = (threat ? 2 : 0) * mass(e.s) + (food ? mass(e.s) : 0) - miss * 3 - gapV - (GAME.virusFeedTimes - fed) * 40;
+                        if (!best || score > best.score) best = { score, e, v, c, ep };
+                    }
+                }
+            }
+            if (best) {
+                if (M.popV !== best.v.id || M.popE !== best.e.key) { M.popV = best.v.id; M.popE = best.e.key; M.popSince = t; M.popN = (M.popN || 0) + 1; M.popPress = 0;
+                    try { teamlog.start(conn, S, 'mining: launch a virus into a player', { target: best.e.name || '', mass: Math.round(mass(best.e.s)) }, '', best.e.key, 5000); } catch (_) { } }
+                if (t - M.popSince > CFG.minePopMs) { M.popHoldUntil = t + CFG.minePopHoldMs; M.popV = 0; }      // this one isn't going off: back to mining for a moment
+                // aim THROUGH the virus from our shooter (the shot's line is shooter -> virus), mouse just past it
+                const dx = best.v.x - best.c.x, dy = best.v.y - best.c.y, d = Math.hypot(dx, dy) || 1;
+                const p = { x: best.v.x + dx / d * 150, y: best.v.y + dy / d * 150 };
+                // 5 hits launch it: with k shooters in a blob's flight that is a press or two, never 17 (the rest flew on into the player)
+                const nearSh = shooters.filter(c => Math.hypot(best.v.x - c.x, best.v.y - c.y) - c.s < 840).length;
+                const maxPress = Math.max(2, Math.ceil(7 / Math.max(1, nearSh)) + 1);
+                conn.sendMouse(p.x, p.y); conn.botAim = p;
+                if ((M.popPress || 0) < maxPress) { conn.sendEject(); M.popPress = (M.popPress || 0) + 1; M.shotAt = t; conn.vfShotAt = t; M.lastTick = S.tick; }
+                else { M.popHoldUntil = t + CFG.minePopHoldMs; M.popV = 0; }
+                conn.mode = 'mining: launching a virus into ' + (best.e.name || 'a player');
+                return true;
+            }
+        }
+        // (3.61.3) THE RACE (the user): a player is coming, but viruses lie closer to us than to it, and eating them makes us
+        // meaningfully bigger (10%+ of our mass, and bigger than it in total): go and eat them instead of moving away. A virus
+        // counts only if the piece of ours that can eat it gets there 1 s before the player could, and it is outside the
+        // player's split reach (being bigger in total doesn't protect a piece - only reaching it first does).
+        // (only at the piece limit: under 16 pieces eating a virus POPS that piece into crumbs in front of the player coming)
+        if (away && eff >= CFG.mineKeepMass && S.mine.length >= CFG.maxCells) {
+            const e = away.e, ev = moveSpeed(e.s) + 0.5, race = [];
+            for (const v of viruses.concat(prod)) {
+                if (race.some(r => r.v === v)) continue;
+                const dE = Math.max(0, Math.hypot(e.x - v.x, e.y - v.y) - e.s);
+                if (dE < away.reach + 150) continue;
+                let best = null;
+                for (const c of S.mine) { if (!canEat(c.s, v.s)) continue; const eta = Math.max(0, Math.hypot(c.x - v.x, c.y - v.y) - c.s) / (moveSpeed(c.s) + 0.5); if (!best || eta < best.eta) best = { c, eta }; }
+                if (best && best.eta + 25 < dE / ev) race.push({ v, c: best.c, eta: best.eta });
+            }
+            const gain = race.reduce((a, r) => a + mass(r.v.s), 0);
+            if (race.length && gain >= 0.1 * S.myMass && S.myMass + gain > mass(e.s)) {
+                const r = race.reduce((a, b) => (b.eta < a.eta ? b : a));
+                const dx = r.v.x - r.c.x, dy = r.v.y - r.c.y, dl = Math.hypot(dx, dy) || 1;
+                const aim = { x: r.v.x + dx / dl * 150, y: r.v.y + dy / dl * 150 };
+                conn.sendMouse(aim.x, aim.y); conn.botAim = aim; markVirusHit(conn, r.v.id); M.target = 0;
+                conn.mode = 'mining: racing ' + (e.name || 'a player') + ' to ' + race.length + ' viruses (+' + Math.round(gain) + ')';
+                return true;
+            }
+        }
+        const safeV = v => !away || ((v.x - c0.x) * away.ux + (v.y - c0.y) * away.uy > -0.25 * (Math.hypot(v.x - c0.x, v.y - c0.y) || 1) && Math.hypot(v.x - away.e.x, v.y - away.e.y) > away.reach + 300);
+        // under the floor we are only here to pick up our own viruses: with someone coming, normal play decides (live 3.55.6:
+        // a 1.9k bot spent its time "moving the field away" and lost most of itself)
+        if (away && eff < CFG.mineKeepMass) { M.target = 0; return false; }
+        if (away) {
+            for (let i = viruses.length - 1; i >= 0; i--) if (!safeV(viruses[i])) viruses.splice(i, 1);
+            for (let i = prod.length - 1; i >= 0; i--) if (!safeV(prod[i])) prod.splice(i, 1);
+            if (!viruses.length && !prod.length && !CFG.mineAwayWalk) {
+                // nothing on the far side: the normal steering takes it from here (it knows walls, ways out, the team)
+                // - live 3.55.3: our own "walk away" pinned a 4.3k miner on the border, where a 2k player ate its pieces
+                M.target = 0; conn.mineAwayAt = t;
+                return false;
+            }
+            if (!viruses.length && !prod.length) {
+                // nothing on the far side: walk the field away from it, on the heading that gains the most distance without
+                // ending up near the border (the border is never a way out: live 3.55.3 pinned a 4.3k miner on it). 16
+                // headings; one that comes within mineAwayWall of the border is out; cornered -> normal steering.
+                const bd = S.border; let best = null, bs = -Infinity;
+                for (let i = 0; i < 16; i++) {
+                    const a2 = i * Math.PI / 8, ux = Math.cos(a2), uy = Math.sin(a2), dot = ux * away.ux + uy * away.uy;
+                    if (dot < 0.1) continue;
+                    if (bd) { const px = c0.x + ux * 1800, py = c0.y + uy * 1800;
+                        if (Math.min(px - bd.minX, bd.maxX - px, py - bd.minY, bd.maxY - py) < CFG.mineAwayWall) continue; }
+                    // not onto anyone else who can eat our pieces
+                    if (S.enemies.some(o => o !== away.e && o.player && !conn.mateKeys.has(o.key) && canEat(o.s, S.maxMine) && segDist(o.x, o.y, c0.x, c0.y, c0.x + ux * 1500, c0.y + uy * 1500) < o.s + 500)) continue;
+                    if (dot > bs) { bs = dot; best = { ux, uy }; }
+                }
+                if (!best) { M.target = 0; conn.mineAwayAt = t; return false; }
+                const p = { x: c0.x + best.ux * 900, y: c0.y + best.uy * 900 };
+                conn.sendMouse(p.x, p.y); conn.botAim = p; M.target = 0;
+                conn.mode = 'mining: moving the field away from ' + (away.e.name || 'a big player');
+                return true;
+            }
+        }
+        if (foe && !CFG.virusGun) {
             // a virus between us and the foe, within a launch (880) of it: shoot through it so the new virus flies into them
             const v = viruses.find(v => { const d = Math.hypot(foe.x - v.x, foe.y - v.y) - foe.s; const ang = Math.abs(Math.atan2(v.y - c0.y, v.x - c0.x) - Math.atan2(foe.y - c0.y, foe.x - c0.x)); return d < 850 && d > 0 && Math.min(ang, 2 * Math.PI - ang) < 0.25 && Math.hypot(v.x - c0.x, v.y - c0.y) < 900; });
             if (v && M.launched < 2 && canEat(foe.s, v.s)) {
                 const p = predict(foe, S.L + 3, S.tick); conn.sendMouse(p.x, p.y); conn.botAim = p;
-                if (S.tick % 2 === 0) { conn.sendEject(); M.shotAt = t; }
-                if (!M.launchV || M.launchV !== v.id) { M.launchV = v.id; M.launchN = (M.launchN || 0) + 1; if (M.launchN > 1) M.launched++; }
+                if (!M.launchV || M.launchV !== v.id) { M.launchV = v.id; M.launchN = (M.launchN || 0) + 1; if (M.launchN > 1) M.launched++; M.launchPress = 0; }
+                const nearSh2 = S.mine.filter(c => c.s >= GAME.minEjectSize && Math.hypot(v.x - c.x, v.y - c.y) - c.s < 840).length;
+                if (S.tick % 2 === 0 && (M.launchPress || 0) < Math.max(2, Math.ceil(7 / Math.max(1, nearSh2)) + 1)) { conn.sendEject(); M.launchPress = (M.launchPress || 0) + 1; M.shotAt = t; }
+                else if ((M.launchPress || 0) >= Math.max(2, Math.ceil(7 / Math.max(1, nearSh2)) + 1)) { M.launched = 2; }
                 conn.mode = 'mining: launching a virus into ' + (foe.name || 'a player');
                 return true;
             }
             // (the user, 2026-10-21: once mining, COMMIT - mining is how we get big; a player nearby never ends it)
         }
-        if (!viruses.length || (S.myMass < CFG.mineKeepMass && blobs.length >= 3)) {
+        // BUILD THE PILE WHILE WHOLE (3.59.1): see the note at the top of the patch. A shot always walks us toward the
+        // mouse, so: walk in firing, step back without firing, walk in again - until we are down to the floor.
+        // (3.61.7) not with a teamer within 3,000 that could eat what the pop leaves (live: a 4,872 whole bot was eaten walking in)
+        const teamerNear = S.enemies.some(e => e.player && !e.remote && isTeamer(e.key) && canEat(e.s, big.s / 2) && Math.hypot(e.x - c0.x, e.y - c0.y) - e.s < 3000);
+        if (CFG.minePile && S.mine.length === 1 && !away && !teamerNear && S.myMass >= CFG.mineKeepMass + 40 && canEat(big.s, GAME.virusSize)) {
+            let pv = null;
+            if (bk) { const bv = conn.cells.get(bk.vid); if (bv && bv.virus) pv = bv; }   // the team's bank first
+            if (!pv) pv = M.pileV ? conn.cells.get(M.pileV) : null;
+            if (pv && !(bk && pv.id === bk.vid) && (!pv.virus || blockedBy(pv) || inDisc(pv) || wallGap(S, pv) <= 300)) pv = null;
+            if (!pv) { let bd = Infinity; for (const x of viruses) { if (blockedBy(x)) continue; const d = Math.hypot(x.x - big.x, x.y - big.y); if (d < bd) { bd = d; pv = x; } } }
+            if (pv) {
+                M.pileV = pv.id; M.target = 0;
+                const dx = pv.x - big.x, dy = pv.y - big.y, d = Math.hypot(dx, dy) || 1, gapE = d - big.s;   // our edge to its middle
+                if (bk && pv.id === bk.vid && (dx * bk.ux + dy * bk.uy) / d < 0.93) {
+                    // the bank is shot from ONE side (the new viruses must land in the pile): round to it, never through the virus
+                    const so = big.s + 260, sx = bk.x - bk.ux * so, sy = bk.y - bk.uy * so, clear = big.s + pv.s * 0.5 + 60;
+                    let ax = sx, ay = sy;
+                    if (segDist(pv.x, pv.y, big.x, big.y, sx, sy) < clear) { const px = -(sy - big.y), py = sx - big.x, pl = Math.hypot(px, py) || 1, side = ((pv.x - big.x) * px + (pv.y - big.y) * py) > 0 ? -1 : 1; ax = pv.x + side * px / pl * (clear + 160); ay = pv.y + side * py / pl * (clear + 160); }
+                    conn.sendMouse(ax, ay); conn.botAim = { x: ax, y: ay }; conn.mode = 'mining: round to the shooting side of the bank'; return true;
+                }
+                M.pileBack = false;   // (3.61.1) walk in firing, never step back (the user: it went back and forth instead of eating)
+                if (M.pileBack) { const p = { x: big.x - dx / d * 500, y: big.y - dy / d * 500 }; conn.sendMouse(p.x, p.y); conn.botAim = p; conn.mode = 'mining: building the pile (stepping back)'; return true; }
+                // (3.60.2) in range: the mouse 3 units ahead of us toward the virus - we barely move, every shot still flies at it
+                // (3.60.6) aim AT the virus: the server moves us to the mouse first and shoots after, so a mouse 3 units ahead
+                // left us on top of it and the shots went right or backwards (the user saw it dump mass away from the virus)
+                conn.sendMouse(pv.x, pv.y); conn.botAim = { x: pv.x, y: pv.y };
+                const inPath = CFG.virusGun ? launchPathPlayer(conn, S, big.x, big.y, pv) : null;
+                const fire = gapE < 700 && !inPath;
+                if (fire) { conn.sendEject(); M.lastTick = S.tick; M.shotAt = t; conn.vfShotAt = t; markVirusHit(conn, pv.id); }
+                else if (inPath && gapE < CFG.minePileOut) { const p = { x: big.x - dx / d * 300, y: big.y - dy / d * 300 }; conn.sendMouse(p.x, p.y); conn.botAim = p; conn.mode = 'mining: holding fire (' + (inPath.name || 'a player') + ' is where the new viruses would land)'; return true; }
+                conn.mode = 'mining: building the pile while whole (' + Math.round(S.myMass) + ' -> ' + CFG.mineKeepMass + (fire ? ', firing)' : ', closing in)');
+                return true;
+            }
+        }
+        if (CFG.minePile && bk && S.mine.length === 1 && !away && S.myMass < CFG.mineKeepMass + 40 && S.myMass >= CFG.mineKeepMass * 0.9) {
+            const bv = conn.cells.get(bk.vid);
+            const busyBank = S.squad.some(m => m.isBot && m.crew === 'banker' && t - m.rx < 1500 && m.cells && m.cells.length && Math.hypot(memberCenter(m).x - bk.x, memberCenter(m).y - bk.y) < 1500);
+            if (bv && bv.virus && busyBank) {
+                if (!M.pileWaitAt) M.pileWaitAt = t;
+                if (t - M.pileWaitAt < CFG.crewBankWaitMs) {
+                    const dx = bv.x - big.x, dy = bv.y - big.y, d = Math.hypot(dx, dy) || 1, gapE = d - big.s;
+                    const p = gapE < CFG.minePileOut ? { x: big.x - dx / d * 300, y: big.y - dy / d * 300 } : { x: big.x, y: big.y };
+                    conn.sendMouse(p.x, p.y); conn.botAim = p; M.target = 0;
+                    conn.mode = 'mining: waiting for the last bank shots (about ' + bankCount(bk) + ' banked)';
+                    return true;
+                }
+            }
+        }
+        // harvest: plenty of our own viruses lying around (or we are at the floor): eat them, nearest first, no shooting
+        // (sim, real rules: stopping the shooting to collect costs far more than it brings - 16.8k vs 3.5-9.9k after 3 min -
+        // so collect only at the floor, when the field in reach is empty, or with a real pile in view)
+        const young = S.myMass < CFG.mineHeadBelow * 0.75;   // (one eater: under ~4,500)
+        if (prod.length >= CFG.mineHarvestAt || (owned && eff < CFG.mineKeepMass) || (young && prod.length >= CFG.mineBankAt)) M.harvest = true;
+        else if (young ? (prod.length <= CFG.mineBankTo && eff >= CFG.mineKeepMass * 1.1) : (eff >= CFG.mineKeepMass * 1.1 || owned <= CFG.mineHarvestTo)) M.harvest = false;
+        if (M.harvest && !prod.length && far.length) {
+            // none of ours in sight: back to the nearest one we remember
+            let o = null, od = Infinity; for (const q of far) { const d = Math.hypot(q.x - c0.x, q.y - c0.y); if (d < od) { od = d; o = q; } }
+            conn.sendMouse(o.x, o.y); conn.botAim = { x: o.x, y: o.y }; M.target = 0;
+            conn.mode = 'mining: going back for ' + far.length + ' viruses we made';
+            return true;
+        }
+        if (prod.length && (M.harvest || CFG.mineChain)) {
+            let best = null, bestM = null, bd = Infinity;
+            let bs = Infinity; const tw = conn.crewToward, twl = tw ? Math.hypot(tw.x - c0.x, tw.y - c0.y) || 1 : 0;
+            for (const x of prod) { let wp = wallPen(x); if (mineWay) { const xl = Math.hypot(x.x - c0.x, x.y - c0.y) || 1; wp += (1 - ((x.x - c0.x) * mineWay.x + (x.y - c0.y) * mineWay.y) / xl) * 450; } if (tw && tw.why === 'field') wp += 0.6 * Math.max(0, Math.hypot(x.x - tw.x, x.y - tw.y) - 1200); else if (tw && twl > 1800) { const xl = Math.hypot(x.x - c0.x, x.y - c0.y) || 1; wp += (1 - ((x.x - c0.x) * (tw.x - c0.x) + (x.y - c0.y) * (tw.y - c0.y)) / (xl * twl)) * 700; } for (const m of S.mine) { if (!canEat(m.s, x.s)) continue; const d = Math.hypot(x.x - m.x, x.y - m.y) - m.s; if (d + wp < bs) { bs = d + wp; bd = d; best = x; bestM = m; } } }
+            const aim = virusAimFor(conn, S, best, bestM);
+            conn.sendMouse(aim.x, aim.y); conn.botAim = aim; M.target = 0; markVirusHit(conn, best.id);
+            // the chain (the user's split-mining): not harvesting yet -> keep firing into the one we are walking onto, from
+            // close up (shots spread 17 deg: beyond ~400 half of them miss); its new viruses launch on ahead of us
+            const fire = !M.harvest && eff >= CFG.mineKeepMass && bd < CFG.mineChainRange && S.mine.some(c => c.s >= GAME.minEjectSize) && !(CFG.virusGun && launchPathPlayer(conn, S, bestM.x, bestM.y, best));
+            if (fire && S.tick - (M.lastTick || 0) >= CFG.mineShotEveryTicks) { conn.sendEject(); M.lastTick = S.tick; M.shotAt = t; conn.vfShotAt = t; }
+            conn.mode = 'mining: eating ' + prod.length + ' viruses we made (' + S.mine.length + ' pieces' + (fire ? ', firing' : '') + ')';
+            return true;
+        }
+        if ((!viruses.length && (sweepWorth || !CFG.mineSeek)) || (S.myMass < CFG.mineKeepMass && blobs.length >= 3)) {
             // field empty - or we've shot ourselves down to the floor: sweep up what we shot and missed (it's ours)
             const p = sweepAim(conn, S, M, blobs, t);
             if (!p) { conn.mining = null; conn.miningOffUntil = t + 3000; return false; }
@@ -2321,6 +3832,7 @@
         // locked onto one virus until it's eaten (gone from view): never switch to another meanwhile
         let v = M.target ? conn.cells.get(M.target) : null;
         if (v && (!v.virus || mineBehind(S.mine, v, M.dir))) v = null;
+        if (v && blockedBy(v)) { (conn.vBan || (conn.vBan = new Map())).set(v.id, t + 3000); v = null; }   // someone moved in: another one
         if (v) {
             // (the user, 2026-10-27: it walked right up, stopped beside the virus while shooting, and got eaten)
             const atIt = S.mine.some(c => Math.hypot(c.x - v.x, c.y - v.y) - c.s - v.s < 60);
@@ -2334,7 +3846,10 @@
             // heading: where our cells are actually moving (mass-weighted), else where we were aiming
             let hx = 0, hy = 0; for (const c of S.mine) if (c.vt >= S.tick - 2) { const m = c.s * c.s; hx += (c.vx || 0) * m; hy += (c.vy || 0) * m; }
             if (Math.hypot(hx, hy) < 1e-6 && conn.botAim) { hx = conn.botAim.x - c0.x; hy = conn.botAim.y - c0.y; }
-            v = mineNextTarget(S.mine, viruses, { x: hx, y: hy }, M.last);
+            const inw = wallGap(S, c0) < CFG.mineWallShy && S.border ? (() => { const mx = (S.border.minX + S.border.maxX) / 2 - c0.x, my = (S.border.minY + S.border.maxY) / 2 - c0.y, ml = Math.hypot(mx, my) || 1; return { x: mx / ml, y: my / ml }; })() : null;
+            const twd = !inw && conn.crewToward && Math.hypot(conn.crewToward.x - c0.x, conn.crewToward.y - c0.y) > 1800 ? (() => { const mx = conn.crewToward.x - c0.x, my = conn.crewToward.y - c0.y, ml = Math.hypot(mx, my) || 1; return { x: mx / ml, y: my / ml }; })() : null;
+            const pref = mineWay || inw || twd;   // (3.61.1) the chosen heading first
+            v = mineNextTarget(S.mine, viruses.filter(x => !blockedBy(x)), pref || { x: hx, y: hy }, pref ? { dx: pref.x, dy: pref.y } : M.last);
             if (!v) {   // every virus left is touching us: sweep up our blobs meanwhile (walking on frees them up)
                 if (blobs.length) { const p = sweepAim(conn, S, conn.mining, blobs, t); if (!p) { conn.mining = null; conn.miningOffUntil = t + 3000; return false; } conn.sendMouse(p.x, p.y); conn.botAim = p; conn.mode = 'mining: sweeping (viruses all touching us)'; return true; }
                 const hl = Math.hypot(hx, hy), p = hl > 1e-6 ? { x: c0.x + hx / hl * 600, y: c0.y + hy / hl * 600 } : { x: c0.x + 600, y: c0.y }; conn.sendMouse(p.x, p.y); conn.botAim = p; conn.mode = 'mining: moving clear of the viruses touching us'; return true;
@@ -2776,6 +4291,7 @@
         // once mining, keep going down to mineKeepFrac of the line (relentless; shooting into viruses costs mass)
         const mineLine = S.conn.virusFarming ? CFG.mineKeepMass : CFG.mineMinMass;   // (was 0.8 x 2300 = 1840: under the user's 2000 floor)
         if (S.myMass < mineLine) { S.virusCollect = false; return why('under ' + CFG.mineMinMass + ' mass: viruses are to avoid'); }
+        { const pe = popEater(S.conn, S); if (pe) { S.virusCollect = false; return why('not popping with ' + (pe.name || 'a big player') + ' near'); } }   // (3.63.1)
         // committed (3.39.0, the user: "they pop, the view widens, they see big players far off and run - leaving a field
         // of easy food"): popped (6+ pieces) right at edible viruses, we stay as long as nobody can actually get a
         // piece soon - touch within mineCommitSecs, or a split they'd really throw at a piece that size. Far-off big
@@ -3861,8 +5377,12 @@
             if (age > CFG.harvestTicks) continue;
             const edible = S.enemies.filter(e => e.key === key && S.mine.some(m => canEat(m.s, e.s) || canEat(m.s / SQRT2, e.s)));
             if (!edible.length) continue;
-            const em = edible.reduce((a, e) => a + mass(e.s), 0), ec = centroid(edible);
-            pulls.push({ x: ec.x, y: ec.y, w: CFG.harvestWeight * em * (1 - age / CFG.harvestTicks), label: 'harvest (popped, locked apart)' });
+            // the NEAREST piece, where it is going (the middle of pieces scattered all round is where we already are: 117 of
+            // 1211 wobbles in 12 h had this pull, 2026-10-29), worth the lot still to eat
+            const em = edible.reduce((a, e) => a + mass(e.s), 0);
+            const ne = edible.reduce((a, e) => (Math.hypot(e.x - center.x, e.y - center.y) < Math.hypot(a.x - center.x, a.y - center.y) ? e : a));
+            const np = predict(ne, S.L + 6, S.tick);
+            pulls.push({ x: np.x, y: np.y, w: CFG.harvestWeight * em * (1 - age / CFG.harvestTicks), label: 'harvest (popped, locked apart)' });
         }
         // virus feast: at the piece limit, viruses we're big enough to eat are free 100+ mass
         if (CFG.virusFeast && (S.mine.length >= GAME.maxCells || S.virusFarm)) {
@@ -3874,7 +5394,23 @@
             }
         }
         // opportunities only count while it's calm: none of them is worth walking into danger for
-        const calm = Math.max(0, 1 - conn.danger / ((0.15 + 0.35 * CFG.dare) * S.myMass + 1));
+        let calm = Math.max(0, 1 - conn.danger / ((0.15 + 0.35 * CFG.dare) * S.myMass + 1));
+        // RUN DOWN (live 2026-10-29: 203 of 389 deaths were teamer split-kills; in 81 of 129 the teamer was closing in over
+        // the last 2-3 s while we "evaded" - pulls kept tugging us sideways). A known teamer that could eat us, coming at us,
+        // within its split reach + CFG.rundownGap: opportunities all but off, and team pulls that aren't an escape cut too.
+        const rundown = CFG.rundown && S.enemies.find(e => {
+            if (e.remote || !isTeamer(e.key)) return false;
+            const big = S.mine.reduce((a2, c) => (c.s > a2.s ? c : a2));
+            if (!canEat(e.s, big.s * 0.9) && !S.mine.some(q => canEat(e.s, q.s) && mass(q.s) > S.myMass / 3)) return false;
+            const r = Math.max(e.s, enemySplitReach(e, big.s, S.ownerCount.get(e.key) || 1));
+            return closingOn(e, center) > 1.5 && Math.hypot(e.x - center.x, e.y - center.y) < r + CFG.rundownGap;
+        });
+        if (rundown) {
+            calm = Math.min(calm, 0.05);
+            const ESCAPE = /flee|running to|rally|diving|for safety|escape|into .* to escape|merging/i;
+            for (const p of pulls) if (p.noCalm && !(p.label && ESCAPE.test(p.label))) p.w *= 0.25;
+            if (conn.rundownOf !== rundown.key) { conn.rundownOf = rundown.key; hud.flash('run down by ' + (rundown.name || 'a teamer') + ': just getting away'); }
+        } else conn.rundownOf = null;
         // a pull's way must be clear: no going through (or to) a spot in reach of a player that could eat us
         const wayThreats = [];
         {
@@ -3903,7 +5439,7 @@
         // help, fleeing with, meeting up, regroup, formation, running to - switching on and off and fighting). Close
         // together, the biggest of us leads: it steers by its own judgement, and the rest follow ITS heading, beside
         // it, instead of each adding up their own tug-of-war. Danger is still scored per bot (nobody follows into a mouth).
-        if (CFG.oneMind && S.squad.length && !conn.ft) {     // (fast travel coordinates the pair itself)
+        if (CFG.oneMind && S.squad.length && !conn.ft && !(CFG.crew && conn.crewApart)) {     // (fast travel coordinates the pair itself; a crew grazing apart follows nobody)
             const FIGHT = /^(team: going to help|team: fleeing with|team: meeting up|team: regroup|team plan: in formation|team: running to|team: coming to help)/;
             // the whole squad follows ONE leader - the biggest of all of us, near or far (the user: "they keep meeting up in
             // pairs instead of meeting all four"; every bot used to regroup with its own nearest teammate)
@@ -3913,12 +5449,17 @@
                 const iLead = S.myMass > lead.mass || (S.myMass === lead.mass && conn.memberId < lead.from);
                 // (the leader keeps its help pulls: the biggest is the one that can save a teammate)
                 for (let i = pulls.length - 1; i >= 0; i--) if (pulls[i].label && FIGHT.test(pulls[i].label) && !(iLead && /help/.test(pulls[i].label))) pulls.splice(i, 1);
-                if (!iLead && typeof lead.dir === 'number') {
+                const lcD = memberCenter(lead), farFromLead = Math.hypot(lcD.x - center.x, lcD.y - center.y) - memberBig(lead) > 1800;
+                const calm = conn.danger < 0.1 * S.myMass + 1 && !((lead.danger || 0) > 0.1 * (lead.mass || 1));
+                if (!iLead && typeof lead.dir === 'number' && !(CFG.crew && lead.mining) && (farFromLead || !calm)) {   // (3.60.5) near a calm leader: no follow pull, farm freely at full speed
                     // beside the leader (our side of it, clear of its eating range), and on along its heading
                     const lc = memberCenter(lead), lb = memberBig(lead);
                     const dx = center.x - lc.x, dy = center.y - lc.y, dl = Math.hypot(dx, dy) || 1;
                     const gap = lb + maxMine + 250;
-                    const tx = lc.x + dx / dl * gap + Math.cos(lead.dir) * 900, ty = lc.y + dy / dl * gap + Math.sin(lead.dir) * 900;
+                    // (3.60.5) behind the leader: aim past its side (its side nearest us), never at its tail
+                    const behind = (dx * Math.cos(lead.dir) + dy * Math.sin(lead.dir)) < 0;
+                    const sx = -Math.sin(lead.dir) * Math.sign(-dx * Math.sin(lead.dir) + dy * Math.cos(lead.dir) || 1), sy = Math.cos(lead.dir) * Math.sign(-dx * Math.sin(lead.dir) + dy * Math.cos(lead.dir) || 1);
+                    const tx = behind ? lc.x + sx * gap + Math.cos(lead.dir) * 1400 : lc.x + dx / dl * gap + Math.cos(lead.dir) * 900, ty = behind ? lc.y + sy * gap + Math.sin(lead.dir) * 1400 : lc.y + dy / dl * gap + Math.sin(lead.dir) * 900;
                     // only where WE survive: the leader is big and safe beside players that eat us (live: a 159 follower was
                     // led between Moon and ChaCha next to its big leader and eaten)
                     const myB = S.mine.reduce((a2, q) => (q.s > a2.s ? q : a2));
@@ -3961,6 +5502,13 @@
                     if (Math.cos(Math.atan2(p.y - center.y, p.x - center.x) - ca) < 0) pulls.splice(i, 1);
                 }
             }
+        }
+        {   // (3.61.0) pulls toward a teammate / a meeting / a job fade with danger and are gone while escaping (they used to fight the
+            // escape: rally <-> get away, every tick). The escape's own pulls stay.
+            const ESC = /flee|running to|rally - merging|diving|for safety|escape|jumping in|into .* for safety|suicide|out of .*'s reach/i;
+            const TOWARD = /^(crew:|team plan:|team: (catching|following|going to|coming to|meeting|regroup|defending|keeping|collecting|handing|herding|pooling)|mining: (heading|looking|going back)|split-run)/;
+            const dr = (conn.danger || 0) / Math.max(1, S.myMass), fade = conn.escMode ? 0 : Math.max(0, 1 - dr / 0.2);
+            if (fade < 1) for (const p of pulls) if (p.label && TOWARD.test(p.label) && !ESC.test(p.label)) p.w *= fade;
         }
         for (const p of pulls) {
             if (!p.noCalm) p.w *= calm;
@@ -4335,14 +5883,16 @@
     // where the big players have been (3.36.0): a coarse 2000-unit grid of giant mass seen by any of us (shared sight
     // included), fading over CFG.quietMemoryMs, so wandering picks the quiet part of the map, not just what's in view
     const bigGrid = new Map();   // "gx,gy" -> { m, t }
+    const conn0 = (S, e) => !!(S.conn && S.conn.mateKeys && S.conn.mateKeys.has(e.key)) || isAlly(e);
     function noteBigPlayers(S) {
         const t = now(), seen = new Set();
         for (const e of S.enemies) {
             if (!e.player || seen.has(e.id)) continue; seen.add(e.id);
-            const m = mass(e.s); if (m < Math.max(1000, S.myMass * 2)) continue;
+            const rk = recentKiller(e.name) && !conn0(S, e);   // (3.62.1) a player that just ate one of us: stay out of its part of the map
+            const m = mass(e.s); if (m < (rk ? Math.max(1000, S.myMass * 1.3) : Math.max(1000, S.myMass * 2))) continue;
             const k = Math.floor(e.x / 2000) + ',' + Math.floor(e.y / 2000);
             const g = bigGrid.get(k), old = g ? g.m * Math.exp(-(t - g.t) / CFG.quietMemoryMs) : 0;
-            bigGrid.set(k, { m: old + m * 0.1, t });
+            bigGrid.set(k, { m: old + m * 0.1 * (rk ? 5 : 1), t });
         }
     }
     const bigAt = (x, y) => {
@@ -4406,6 +5956,8 @@
                 if (canEat(T.s, M.s) && Math.hypot(T.x - M.x, T.y - M.y) < 1600) val += mass(M.s) * 0.6;
                 const pieceSize = T.s / Math.sqrt(Math.min(GAME.maxCells - oc + 1, 8));
                 if (canEat(M.s, pieceSize)) val += mass(T.s) * 0.35;
+                // ...or a teammate close by can (the user, 2026-11-10: attack and take): a small one of us pops it, the bigger eats
+                else if (CFG.teamPop && S.mates.some(m => canEat(m.s, pieceSize * CFG.eatMargin) && Math.hypot(m.x - T.x, m.y - T.y) < CFG.teamPopRange)) val += mass(T.s) * 0.3;
                 if (S.captain && S.captain.order.mode === 'protect') { const cc = memberCenter(S.captain), cb = memberBig(S.captain);
                     if (Math.hypot(T.x - cc.x, T.y - cc.y) < T.s + cb + 1500 && T.s > cb * 0.8) val += mass(T.s) * 0.6; }
                 const cost = need * mass(GAME.ejectLoss) * shooters.length + dMV * 0.02;
@@ -4516,7 +6068,7 @@
         const k = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / l2));
         return Math.hypot(px - ax - k * dx, py - ay - k * dy);
     };
-    const MERGE_TICKS = s => 25 * 60 + Math.round(s * 0.5); // server merge timer (~60 s on this server)
+    const MERGE_TICKS = s => 25 * 30 + Math.round(s * 0.5);   // (3.59.4: was 25 * 60; live merges measured at 30 s + size/50) // server merge timer (~60 s on this server)
 
     function flankBits(S, group, B, M, etaTicks) {
         // bits we can eat by moving, that won't have merged back into the big part before we arrive
@@ -4536,12 +6088,13 @@
             if (group.length < 3 || (S.conn.flankBan.get(key) || 0) > t) continue;
             const B = group.reduce((a, b) => (b.s > a.s ? b : a));
             if (!canEat(B.s, M.s)) continue; // the big part isn't a threat: normal hunting handles it
+            if (isTeamer(key) || recentKiller(B.name) || isFoe(B)) continue;   // (3.60.9) a partner feeds it bigger in an instant (live 01:45: a 1,024 bot eaten circling a teamer)
             const dPB = Math.hypot(B.x - M.x, B.y - M.y);
             if (dPB > 2600) continue;
             const oc = group.length;
             // it must not be able (max cells) or want (we're not worth it) to split onto us while we circle
             if (oc < GAME.maxCells && splitLikelihood(B, M.s, oc, S) >= 0.5 && enemySplitReach(B, M.s, oc) > -Infinity) continue;
-            const Rs = B.s - M.s / GAME.eatOverlapDiv + CFG.flankClear;
+            const Rs = B.s - M.s / GAME.eatOverlapDiv + CFG.flankClear + B.s * 0.15;   // (3.60.9) its own size grows the berth: it may have just eaten
             // rough path: reach the safe circle, go round a quarter of it, then on to the bits
             const etaTicks = (Math.max(0, dPB - Rs) + Math.PI / 2 * Rs + 600) / moveSpeed(M.s);
             if (etaTicks * GAME.tickMs > CFG.flankMaxMs) continue;
@@ -4872,6 +6425,7 @@
         }
         // a kill assist with the prey right against our teammate: shots would land in the prey as well, so split in
         const preyClose = prey && Math.hypot(prey.x - target.x, prey.y - target.y) < prey.s + target.s + 150;
+        if (prey && !CFG.feedSplitKill) splitIn = false;   // (3.64.0)
         if (preyClose) {
             fire = false;
             if (splitIn) {
@@ -4964,7 +6518,7 @@
             }
         }
         // asks for a kill that bring no mass within 4 s are dropped (helpers busy / too far after all)
-        if (best && /^to split-kill/.test(best.why) && !moves.allowed('ask boost to split-kill')) best = null;
+        if (best && /^to split-kill/.test(best.why) && (!CFG.askBoostKill || !moves.allowed('ask boost to split-kill'))) best = null;
         if (best) {   // (all asks, not only kill asks: an "out of X's reach" ask that nobody answered held a bot still forever)
             const nt = S.conn.needTrack;
             if (!nt || nt.target !== best.target) S.conn.needTrack = { target: best.target, since: now(), mass0: S.myMass };
@@ -4986,7 +6540,7 @@
     function planMembers(conn, S) {
         const self = { id: conn.memberId, name: S.mine[0] && S.mine[0].name, cells: S.mine.map(c => ({ id: c.id, x: c.x, y: c.y, s: c.s })),
             mass: S.myMass, danger: conn.danger || 0, dir: conn.botDir, asks: !!(conn.squadNeed && conn.squadNeed.urgent && !/^to eat/.test(conn.squadNeed.why)),
-            busy: S.virusFarm ? 'farm' : conn.relay && conn.relay.active ? 'relay' : null };
+            busy: S.virusFarm ? 'farm' : conn.relay && conn.relay.active ? 'relay' : null, mining: !!conn.mining };
         const out = [self];
         for (const m of S.squad) {
             if (!m.cells.length) continue;
@@ -4995,7 +6549,7 @@
             // their cells as we see them (fresher than the message) where we can, else as they told us
             const seen = S.mates.filter(c => c.key === m.key);
             const cells = seen.length ? seen.map(c => ({ id: c.id, x: c.x, y: c.y, s: c.s })) : m.cells.map(r => ({ id: r[0], x: r[1], y: r[2], s: r[3] }));
-            out.push({ id: m.from, name: m.name, cells, mass: m.mass, danger: m.danger || 0, dir: m.dir, asks: !!(m.intent && m.intent.need && m.intent.need.urgent && !/^to eat/.test(m.intent.need.why)), busy: m.busy || null });
+            out.push({ id: m.from, name: m.name, cells, mass: m.mass, danger: m.danger || 0, dir: m.dir, asks: !!(m.intent && m.intent.need && m.intent.need.urgent && !/^to eat/.test(m.intent.need.why)), busy: m.busy || null, mining: !!m.mining });
         }
         for (const x of out) {
             x.big = x.cells.reduce((a, c) => (!a || c.s > a.s ? c : a), null);
@@ -5025,6 +6579,7 @@
         // and not to make an already much bigger one bigger still (unless the owner is in trouble)
         const eat = [], flow = new Map();   // mass already on its way to (+) / from (-) each body
         for (const B of mem) {
+            if (CFG.crew && B.mining) continue;   // (3.59.0) a miner keeps every piece
             const bPressed = B.danger > 0.1 * B.mass;
             for (const c of B.cells) {
                 if (c === B.big || c.s > B.big.s * 0.85) continue;
@@ -5449,7 +7004,7 @@
         const t = now();
         let best = null;
         for (const m of S.squad) if (m.order && m.cells.length && t - m.rx < 1500 && (!best || m.from < best.from)) best = m;
-        if (best || !CFG.carryBots || !conn) return best;
+        if (best || !CFG.carryBots || CFG.crew || !conn) return best;
         return botCarrier(S, conn);
     }
     // the VIP (3.37.0): another player all our bots work for, as if it were our captain. 'feed' = a standing
@@ -5645,8 +7200,8 @@
         // to the mouse before it shoots), so inside 250 we back off without shooting, and come in again from 450
         if (gap < 250) st.back = true; else if (gap > 450) st.back = false;
         if (st.back) {
-            const ux = (myBig.x - cc.x) / (dCap || 1), uy = (myBig.y - cc.y) / (dCap || 1);
-            const bx = myBig.x + ux * 600, by = myBig.y + uy * 600;
+            const ux = (myBig.x - cc.x) / (dCap || 1), uy = (myBig.y - cc.y) / (dCap || 1), sd = st.orbit || (st.orbit = Math.random() < 0.5 ? 1 : -1);
+            const bx = myBig.x + (-uy * sd * 0.9 + ux * 0.45) * 600, by = myBig.y + (ux * sd * 0.9 + uy * 0.45) * 600;   // (3.61.2) curve round, don't reverse
             conn.sendMouse(bx, by); conn.botAim = { x: bx, y: by };
             conn.mode = 'carry: backing off ' + who + ' (too close to feed)';
             return true;
@@ -7587,7 +9142,7 @@
                 const mb = S.mine.reduce((a2, c) => (c.s > a2.s ? c : a2));
                 const clash = S.mates.some(c => (canEat(c.s, mb.s * 0.9) || canEat(mb.s, c.s * 0.9)) &&
                     (Math.hypot(c.x - tx, c.y - ty) < c.s + mb.s + 250 || segDist(c.x, c.y, mb.x, mb.y, tx, ty) < c.s + mb.s * 0.5 + 100));
-                if (!clash) pulls.push({ x: tx, y: ty, noCalm: off > 700, w: CFG.teamTogetherWeight * S.myMass * Math.min(1.5, off / 700), label: 'team plan: in formation' });
+                if (!clash && !(CFG.crew && conn.crewApart)) pulls.push({ x: tx, y: ty, noCalm: off > 700, w: CFG.teamTogetherWeight * S.myMass * Math.min(1.5, off / 700), label: 'team plan: in formation' });
             }
             // eat: the pieces assigned to us; hand over ours that are assigned to someone else
             const mineIds = new Set(S.mine.map(c => c.id));
@@ -7656,8 +9211,24 @@
                 pulls.push({ x: tx, y: ty, noCalm: true, w: CFG.teamHelpWeight * S.myMass, label: 'team: keeping ' + (prey.name || 'it') + ' pinned' });
             }
         }
+        // (3.61.9) chased and escaping: the nearest teammate that can swallow our biggest piece and isn't itself in deep trouble
+        let intoMate = null;
+        if (CFG.runIntoMate && conn.escMode) {
+            let bd = CFG.runIntoRange;
+            for (const m of S.squad) {
+                if (!m.cells || !m.cells.length || !canEat(memberBig(m), maxMine * 1.03) || (m.danger || 0) > 0.3 * (m.mass || 1)) continue;
+                const c = memberCenter(m), dd = Math.hypot(c.x - center.x, c.y - center.y);
+                if (dd < bd) { bd = dd; intoMate = m; }
+            }
+        }
+        if (CFG.packs && conn.packRole === 'main' && conn.packFeeders && conn.packFeeders.length && !conn.escMode && conn.danger < 0.05 * S.myMass + 1) {
+            let fx = 0, fy = 0; for (const o of conn.packFeeders) { fx += o.c.x; fy += o.c.y; } fx /= conn.packFeeders.length; fy /= conn.packFeeders.length;
+            const fd = Math.hypot(fx - center.x, fy - center.y);
+            if (fd > 2500) pulls.push({ x: fx, y: fy, w: 0.3 * S.myMass * Math.min(1, (fd - 2500) / 2000), label: 'pack: staying near our feeders' });
+        }
         for (const m of S.squad) {
             const mc = memberCenter(m), mbig = memberBig(m);
+            if (m === intoMate) pulls.push({ x: mc.x, y: mc.y, w: CFG.runIntoWeight * S.myMass, noCalm: true, label: 'team: running to ' + (m.name || 'a teammate') + ' for safety' });
             const d = Math.hypot(mc.x - center.x, mc.y - center.y), gap = d - maxMine - mbig;
             // feeding us: go to it and hold there while the blobs arrive
             // stick together: head for a spot beside the teammate (on our side of it, a comfortable gap away), never
@@ -7665,7 +9236,7 @@
             const ux = d > 1 ? (center.x - mc.x) / d : 1, uy = d > 1 ? (center.y - mc.y) / d : 0;
             const beside = { x: mc.x + ux * (mbig + maxMine + 200), y: mc.y + uy * (mbig + maxMine + 200) };
             // continuous (no on/off at a threshold, which made them drift apart and lunge back): grows with the gap
-            if (gap > 250 && !plan) pulls.push({ x: beside.x, y: beside.y, noCalm: gap > 900 && conn.danger < 0.05 * S.myMass + 1, label: 'team: regroup',
+            if (gap > 250 && !plan && !(CFG.crew && conn.crewApart)) pulls.push({ x: beside.x, y: beside.y, noCalm: gap > 900 && conn.danger < 0.05 * S.myMass + 1, label: 'team: regroup',
                 w: Math.max(CFG.squadNearWeight * Math.min(25, (gap - 250) / 120), CFG.teamTogetherWeight * S.myMass * Math.min(1, (gap - 250) / 1000)) });
             // calm and far apart: meet up (nearer the bigger, slower one) - being together is what makes team play possible
             const calmBoth = conn.danger < 0.05 * S.myMass + 1 && (m.danger || 0) < 0.05 * m.mass + 1;
@@ -7684,7 +9255,7 @@
                         if (rt[0] > straight * 1.02 && Math.hypot(rt[1] - B.x, rt[2] - B.y) > 300) { mx = rt[1]; my = rt[2]; }
                     }
                 }
-                pulls.push({ x: mx, y: my, noCalm: true, w: CFG.teamMeetWeight * S.myMass * Math.min(2.5, (gap - 800) / 1000), label: 'team: meeting up with ' + (m.name || 'our teammate') });
+                if (!(CFG.crew && conn.crewApart)) pulls.push({ x: mx, y: my, noCalm: true, w: CFG.teamMeetWeight * S.myMass * Math.min(2.5, (gap - 800) / 1000), label: 'team: meeting up with ' + (m.name || 'our teammate') });
             }
             // it's feeding us: its shot blobs are ours - collect them; until they land, hold toward the feeder
             if (m.intent && m.intent.feeding && m.intent.feedingTo === conn.memberId && conn.danger < 0.15 * S.myMass) {
@@ -7726,7 +9297,20 @@
             // pooling pieces under pressure: close in, so each one's big pieces take the other's small ones
             if (false && conn.teamPool && d < 2000) pulls.push({ x: mc.x, y: mc.y, w: 0.12 * S.myMass, noCalm: true, label: 'team: pooling pieces with ' + (m.name || 'a teammate') });
             // a teammate diving into us to escape: meet it
-            if (m.intent && m.intent.merge) { pulls.push({ x: mc.x, y: mc.y, w: 0.5 * m.mass, noCalm: true, label: 'team: catching ' + (m.name || 'a teammate') }); continue; }
+            if (m.intent && m.intent.merge) {
+                // (3.61.6) ONE catcher per dive: the nearest of us whose biggest piece can take the diver's biggest. Every bot used to
+                // answer every dive signal (it flicks on and off every ~0.5 s): the commonest pull in the wobble logs.
+                const mBig = m.cells.reduce((a2, r) => (r[3] > a2[3] ? r : a2));
+                const myB = S.mine.reduce((a2, q) => (q.s > a2.s ? q : a2));
+                let iCatch = canEat(myB.s, mBig[3]);
+                if (iCatch) {
+                    const dMe = Math.hypot(myB.x - mBig[1], myB.y - mBig[2]);
+                    for (const o of S.squad) { if (o === m || !o.cells || !o.cells.length) continue; const ob = o.cells.reduce((a2, r) => (r[3] > a2[3] ? r : a2)); if (canEat(ob[3], mBig[3]) && Math.hypot(ob[1] - mBig[1], ob[2] - mBig[2]) < dMe - 50) { iCatch = false; break; } }
+                }
+                if (iCatch) { conn.catchFrom = m.from; conn.catchUntil = now() + 1500; }
+                if (iCatch || (conn.catchFrom === m.from && now() < (conn.catchUntil || 0))) pulls.push({ x: mc.x, y: mc.y, w: 0.5 * m.mass, noCalm: true, label: 'team: catching ' + (m.name || 'a teammate') });
+                continue;
+            }
             // a teammate's prey we can eat too: get on the far side, so running from it means running into us
             const h = m.intent && m.intent.hunt;
             if (h && canEat(maxMine, h.s)) {
@@ -7885,10 +9469,12 @@
             conn.botAim = fa; conn.mode = 'team plan: feeding across the line';
             return true;
         }
-        if (CFG.teamSplitEscape && big.s >= GAME.minSplitSize && now() - conn.lastAction > 900 && S.mine.length <= 2) {
+        if (CFG.teamSplitEscape && S.myMass >= CFG.teamDiveMinMass && big.s >= GAME.minSplitSize && now() - conn.lastAction > 900 && S.mine.length <= 2) {
             // about to be eaten: by touch soon, or by its split
             const chaser = S.enemies.filter(e => {
                 const d = Math.hypot(e.x - big.x, e.y - big.y);
+                const closing = e.vt >= S.tick - 2 ? ((e.vx || 0) * (big.x - e.x) + (e.vy || 0) * (big.y - e.y)) / (d || 1) : 0;
+                if (!(closing > 1 || isTeamer(e.key) || recentKiller(e.name) || isFoe(e))) return false;   // (3.60.7) not for a player that isn't coming
                 if (canEat(e.s, big.s) && d - (e.s - big.s / GAME.eatOverlapDiv) < 650) return true;
                 const sr = enemySplitReach(e, big.s, S.ownerCount.get(e.key) || 1);
                 return sr > -Infinity && d < sr + 250;
@@ -8227,6 +9813,18 @@
     // Safety budget, for everything that shoots mass: losing `loss` mass from each of `pieces` must not
     // carry any of them across a nearby player's line, i.e. from "can't eat it by touching" to "can",
     // or from "out of its split's reach" to "in it" (single split for bots, double for humans).
+    // (3.63.1) who would get a meal if we popped now (null = nobody)
+    function popEater(conn, S) {
+        if (!CFG.popSafe || S.mine.length > 4) return null;
+        const ps = Math.sqrt(100 * (S.myMass + 100) / 12), c0 = S.center;
+        for (const e of S.enemies) {
+            if (!e.player || e.remote || isAlly(e) || (conn.mateKeys && conn.mateKeys.has(e.key))) continue;
+            if (mass(e.s) < CFG.popSafeMinFrac * S.myMass || !canEat(e.s, ps)) continue;
+            const reach = enemySplitReach(e, ps, S.ownerCount.get(e.key) || 1);
+            if (Math.hypot(e.x - c0.x, e.y - c0.y) - e.s < Math.max(CFG.popSafeRange, reach > -Infinity ? reach + 800 : 0)) return e;
+        }
+        return null;
+    }
     function shrinkSafe(S, pieces, loss) {
         for (const p of pieces) {
             if (p.s < GAME.minEjectSize) continue; // doesn't shoot, doesn't shrink
@@ -8397,11 +9995,74 @@
         return true;
     }
 
+    // ---------------------------------------------------------------- wire watch (the user, 2026-10-29)
+    // Firefox lost all its tabs at once, more than once. A web page can't close other tabs, but an extension can, and
+    // SigMod (run by Tampermonkey) keeps a live link to its own server. So we record, for the Lab:
+    //  - every message on any socket that isn't the game server itself (SigMod's mod.czrsd.com etc.), both ways
+    //  - on the game socket: text frames (it only speaks binary) and packet types we haven't seen before on it
+    //  - any script calling window.close / window.open / location.assign / replace, with who called it
+    //  - the page being hidden, unloaded or closed (sent with sendBeacon, which still goes out as the page dies)
+    const wire = { q: [], dropped: 0, seen: new WeakMap() };
+    const isGameWs = ws => /\/\/[a-z]{2}\d\.sigmally\.com\/ws/i.test(String((ws && ws.url) || ''));
+    const preview = data => {
+        if (typeof data === 'string') return { text: data.slice(0, 600), len: data.length };
+        const u = data instanceof ArrayBuffer ? new Uint8Array(data) : ArrayBuffer.isView(data) ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength) : null;
+        if (!u) return { text: '[' + (data && data.constructor ? data.constructor.name : typeof data) + ']', len: 0 };
+        let hex = ''; for (let i = 0; i < Math.min(u.length, 96); i++) hex += u[i].toString(16).padStart(2, '0');
+        let txt = ''; for (let i = 0; i < Math.min(u.length, 200); i++) { const ch = u[i]; txt += ch >= 32 && ch < 127 ? String.fromCharCode(ch) : '.'; }
+        return { hex, ascii: txt, len: u.length };
+    };
+    function wireNote(kind, url, info) {
+        if (wire.q.length > 200) { wire.dropped++; return; }
+        wire.q.push({ t: Date.now(), kind, url: String(url || '').slice(0, 120), ...info });
+    }
+    function wireSaw(ws, dir, data) {
+        try {
+            if (ws === lab.ws) return;
+            if (!isGameWs(ws)) return wireNote(dir === 'in' ? 'other-in' : 'other-out', ws.url, preview(data));
+            if (typeof data === 'string') return wireNote(dir === 'in' ? 'game-text-in' : 'game-text-out', ws.url, preview(data));
+            // binary game packet: note a packet type this connection hasn't used before (after its first 20 s)
+            const u = data instanceof ArrayBuffer ? new Uint8Array(data) : ArrayBuffer.isView(data) ? new Uint8Array(data.buffer, data.byteOffset, 1) : null;
+            if (!u || !u.length) return;
+            let st = wire.seen.get(ws); if (!st) { st = { at: Date.now(), in: new Set(), out: new Set() }; wire.seen.set(ws, st); }
+            const set = st[dir], op = u[0];
+            if (!set.has(op)) { set.add(op); if (Date.now() - st.at > 20000) wireNote('game-new-' + dir, ws.url, { op, ...preview(data) }); }
+        } catch (_) { }
+    }
+    setInterval(() => {
+        if (!wire.q.length && !wire.dropped) return;
+        const entries = wire.q.splice(0, 200);
+        lab.send({ type: 'wire', entries, dropped: wire.dropped, page: location.href }); wire.dropped = 0;
+    }, 1000);
+    // scripts closing, opening or redirecting the page: who called it
+    const callerOf = () => { try { return String(new Error().stack || '').split('\n').slice(2, 6).map(x => x.trim()).join(' | ').slice(0, 400); } catch (_) { return ''; } };
+    for (const name of ['close', 'open']) {
+        try {
+            const orig = W[name];
+            if (typeof orig === 'function') W[name] = function (...args) { wireNote('page-' + name, location.href, { args: args.map(a => String(a).slice(0, 120)), by: callerOf() }); return orig.apply(this, args); };
+        } catch (_) { }
+    }
+    for (const name of ['assign', 'replace']) {
+        try {
+            const orig = W.location[name].bind(W.location);
+            Object.defineProperty(W.location, name, { configurable: true, value: (...args) => { wireNote('page-' + name, location.href, { args: args.map(a => String(a).slice(0, 200)), by: callerOf() }); return orig(...args); } });
+        } catch (_) { }   // (some browsers don't let location be wrapped - the unload note below still shows it)
+    }
+    // the page going away: sendBeacon gets out even while the tab is closing
+        const beacon = what => {
+            const payload = JSON.stringify({ what, t: Date.now(), page: location.href, ua: navigator.userAgent, last: wire.q.slice(-20) });
+            try { navigator.sendBeacon('http://127.0.0.1:47800/beacon', payload); } catch (_) { } }
+;
+    if (W.addEventListener) W.addEventListener('pagehide', ev => beacon(ev.persisted ? 'pagehide (kept in cache)' : 'pagehide (tab closed, reloaded or navigated away)'), true);
+    if (W.addEventListener) W.addEventListener('beforeunload', () => beacon('beforeunload'), true);
+    if (document.addEventListener) document.addEventListener('visibilitychange', () => wireNote('page-visibility', location.href, { state: document.visibilityState }), true);
+
     // ---------------------------------------------------------------- WebSocket hook
     const sendHook = function (data) {
         // retired (a newer copy took over): the game may still call this hook - pass everything to the newest copy's
         if (retired) { const h = W.__megaSendHook; return h && h !== sendHook ? h.call(this, data) : nativeSend.call(this, data); }
         if (this === lab.ws) return nativeSend.call(this, data); // our own lab link, not a game server
+        wireSaw(this, 'out', data);
         seenSockets.add(this);
         let c = conns.get(this);
         if (!c) { c = new Conn(this); conns.set(this, c); }
@@ -8573,6 +10234,9 @@
         const tgt = e.target;
         if (tgt && (tgt.tagName === 'INPUT' || tgt.tagName === 'TEXTAREA' || tgt.isContentEditable)) return;
         if (e.repeat || e.ctrlKey || e.altKey || e.metaKey) return;
+        // SigMod's rapid-feed key (Q) now only starts feeding after you've held it a moment: shoot one blob the instant it's
+        // pressed, as it used to (the user, 2026-10-28). SigMod's own rapid feed still takes over while it's held.
+        if (!CFG.bot && CFG.instantFeed && activeConn && activeConn.mine.size && e.key && e.key.toLowerCase() === sigmodFeedKey()) activeConn.sendEject();
         if (pick.kind && e.code === 'Escape') { endPick(); e.preventDefault(); e.stopImmediatePropagation(); return; }
         const k = CFG.keys;
         let handled = true;
@@ -8587,7 +10251,7 @@
             hud.flash('bot ' + (CFG.bot ? 'ON' : 'off'));
             saveCfg(); // keep it over a reload (the hourly drop reloaded the captain's tab with the bot back on)
         }
-        else if (!CFG.bot && e.code === (k.intel || 'KeyI')) { CFG.intelInject = !CFG.intelInject; customKeys.add('intelInject'); saveCfg(); if (!CFG.intelInject && activeConn) intelInjectClear(activeConn); hud.flash('intel on screen ' + (CFG.intelInject ? 'ON' : 'off')); }
+        else if (e.code === (k.intel || 'KeyI')) { CFG.intelInject = !CFG.intelInject; customKeys.add('intelInject'); saveCfg(); if (!CFG.intelInject && activeConn) intelInjectClear(activeConn); hud.flash('intel on screen ' + (CFG.intelInject ? 'ON' : 'off')); }
         else if (!CFG.bot && e.code === (k.overlay || 'KeyO')) { CFG.overlay = !CFG.overlay; customKeys.add('overlay'); saveCfg(); hud.flash('overlay ' + (CFG.overlay ? 'ON' : 'off')); }
         else if (!CFG.bot && e.code === (k.guardian || 'KeyK')) { CFG.guardian = !CFG.guardian; customKeys.add('guardian'); saveCfg(); hud.flash('guardian ' + (CFG.guardian ? 'ON: I take the wheel when you head into death' : 'off')); }
         else if (!CFG.bot && (e.code === 'ShiftLeft' || e.code === 'ShiftRight')) { aimLock(true); handled = false; }   // (let the game see Shift too)
@@ -8623,6 +10287,62 @@
         if (handled) { saveCfg(); e.stopImmediatePropagation(); e.preventDefault(); if (activeConn) { hud.lastDraw = 0; hud.update(activeConn); } }
     }, true);
 
+    // ---- captcha watch (the user, 2026-10-28): tell the Lab when a Cloudflare / reCAPTCHA check is showing in this page,
+    // so it can tell the player and bring this window up for them. We never click it.
+    function captchaShowing() {
+        const els = [document.getElementById('cf-turnstile'), document.getElementById('g-recaptcha'),
+            ...document.querySelectorAll('iframe[src*="challenges.cloudflare.com"], iframe[src*="recaptcha"]')];
+        return els.some(el => { if (!el) return false; const r = el.getBoundingClientRect(); return el.offsetParent !== null && r.width > 20 && r.height > 20; });
+    }
+    let captchaSent = { on: null, at: 0 };
+    setInterval(() => {
+        if (retired || notOwner()) return;
+        try { lab.connect(); } catch (_) { }
+        let on = false; try { on = captchaShowing(); } catch (_) { }
+        if (on !== captchaSent.on || Date.now() - captchaSent.at > 10000) { captchaSent = { on, at: Date.now() }; lab.send({ type: 'captcha', on }); }
+    }, 1500);
+    // ---- auto-wiggle helpers (the player's tab)
+    function gameNotice(text, ms, action) {
+        let el = document.getElementById('mega-notice');
+        if (!el) {
+            el = document.createElement('div'); el.id = 'mega-notice';
+            el.style.cssText = 'position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:2147483646;background:rgba(15,20,30,.85);color:#ffd24a;' +
+                'font:600 13px system-ui,sans-serif;padding:6px 12px;border-radius:8px;border:1px solid rgba(255,210,74,.5);pointer-events:none;transition:opacity .4s;max-width:80vw;text-align:center';
+            (document.body || document.documentElement).appendChild(el);
+        }
+        el.textContent = text; el.style.opacity = '1'; el.style.pointerEvents = action ? 'auto' : 'none';
+        if (action && action.front) {
+            const b = document.createElement('button');
+            b.textContent = action.label || 'Take me there';
+            b.style.cssText = 'margin-left:10px;font:600 12px system-ui,sans-serif;padding:3px 10px;border-radius:6px;border:0;background:#ffd24a;color:#111;cursor:pointer';
+            b.onclick = ev => { ev.stopPropagation(); lab.send({ type: 'front', id: action.front }); el.style.opacity = '0'; el.style.pointerEvents = 'none'; };
+            el.appendChild(b);
+        }
+        clearTimeout(gameNotice.timer); gameNotice.timer = setTimeout(() => { el.style.opacity = '0'; el.style.pointerEvents = 'none'; }, ms);
+    }
+    let respawnHold = null;   // { was: SigMod's autoRespawn before, timer }
+    function holdRespawn(on) {
+        const sm = W.sigmod || W.__sigmodApp;
+        const objs = sm ? [sm.settings && sm.settings.settings, sm.settingsStore && sm.settingsStore.value && sm.settingsStore.value.settings].filter(Boolean) : [];
+        if (on) {
+            if (!respawnHold) respawnHold = { was: objs.map(o => o.autoRespawn) };
+            for (const o of objs) o.autoRespawn = false;
+            clearTimeout(respawnHold.timer); respawnHold.timer = setTimeout(() => holdRespawn(false), 300000);
+        } else if (respawnHold) {
+            objs.forEach((o, i) => { if (respawnHold.was[i] !== undefined) o.autoRespawn = respawnHold.was[i]; });
+            clearTimeout(respawnHold.timer); respawnHold = null;
+        }
+    }
+    // SigMod's rapid-feed key from its saved settings ('' without SigMod), re-read every few seconds in case it's rebound
+    let smFeed = { key: '', at: -1e9 };
+    function sigmodFeedKey() {
+        if (Date.now() - smFeed.at > 5000) {
+            smFeed.at = Date.now();
+            try { const sm = JSON.parse(localStorage.getItem('SigModClient-settings') || 'null'); const k = sm && sm.macros && sm.macros.keys && sm.macros.keys.rapidFeed; smFeed.key = typeof k === 'string' ? k.toLowerCase() : ''; }
+            catch (_) { smFeed.key = ''; }
+        }
+        return smFeed.key;
+    }
     // Shift / A: heading lock and backward shots (see CFG.backShot*)
     const aimCtl = { lock: null, shoot: false, mine: false, mineV: 0, holdUntil: 0, nextShotAt: 0, sentAt: 0, phase: '' };
     function aimCentre(mine) {
@@ -8841,9 +10561,11 @@
         for (let i = 1; i < tr.length; i++) path += Math.hypot(tr[i].x - tr[i - 1].x, tr[i].y - tr[i - 1].y);
         const net = Math.hypot(tr[tr.length - 1].x - tr[0].x, tr[tr.length - 1].y - tr[0].y);
         // moving but going nowhere (and not just holding still on purpose)
-        if (path < 350 || net > path * 0.3 || (conn.wobLogAt && t - conn.wobLogAt < 20000)) return;
-        if (/virus farm|feeding|pinned|in formation|following the split/.test(conn.mode || '')) return;  // standing still on purpose
+        if (path < 350 || net > path * 0.3) return;
+        if (/virus farm|feeding|pinned|in formation|following the split|mining|unsticking/.test(conn.mode || '')) return;  // on purpose (mining walks a field; unsticking is the cure)
         if (tr.some(e => /dead|respawning/.test(e.mode))) return;                                          // a respawn jump, not a wobble
+        if (CFG.unstick && !(t < (conn.unstickUntil || 0))) conn.unstickWant = t;   // (3.61.5) act on it: the tick commits to one way
+        if (conn.wobLogAt && t - conn.wobLogAt < 20000) return;
         conn.wobLogAt = t;
         const deg = a => Math.round(((a * 180 / Math.PI) % 360 + 360) % 360);
         const modes = []; for (const e of tr) if (!modes.length || modes[modes.length - 1] !== e.mode) modes.push(e.mode);
@@ -8865,21 +10587,27 @@
     const lab = {
         ws: null, open: false, retryAt: 0, ring: [], lastSnap: 0, lastMode: '',
         connect() {
-            if (retired || !CFG.lab || this.ws || now() < this.retryAt) return;
+            // a link stuck "connecting" (never opened, never closed) used to block every retry for good - two Opera
+            // private windows never came back after a Lab restart (2026-10-29): give up on it after 8 s and try again
+            // (judged by our own flag, not readyState: in Firefox through Tampermonkey readyState can read 0 on an open link,
+            // and 3.54.16 opened a new link every 8 s - 115 from one tab)
+            if (this.ws && !this.open && now() - (this.openedAt || 0) > 8000) { const old = this.ws; this.ws = null; try { old.close(); } catch (_) { } }
+            if (retired || !CFG.lab) return;
+            if (this.ws || now() < this.retryAt) return;
             this.retryAt = now() + 5000;
             let ws;
             try { ws = new NativeWS(CFG.labUrl); } catch (_) { return; }
-            this.ws = ws;
+            this.ws = ws; this.openedAt = now();
             ws.onopen = () => {
                 this.open = true;
                 this.send({ type: 'hello', version: VERSION, page: location.href, cfg: CFG, maxCells: GAME.maxCells,
                     ua: typeof navigator !== 'undefined' ? navigator.userAgent : '' });
             };
-            ws.onclose = () => { this.ws = null; this.open = false; };
+            ws.onclose = () => { if (this.ws === ws) { this.ws = null; this.open = false; } };   // (an old link closing must not drop the current one)
             ws.onerror = () => { };
             ws.onmessage = ev => { try { this.command(JSON.parse(ev.data)); } catch (err) { console.error('[MegaBot lab]', err); } };
         },
-        send(msg) { if (this.open) try { nativeSend.call(this.ws, JSON.stringify(msg)); } catch (_) { } },
+        send(msg) { if (!this.open) return; const d = JSON.stringify(msg); try { if (this.pipe) this.ws.send(d); else nativeSend.call(this.ws, d); } catch (_) { } },
         event(text) { this.send({ type: 'event', t: Date.now(), text }); },
         command(m) {
             if (m.type === 'squad') return squad.receive(m); // a mate in another process, relayed
@@ -8903,6 +10631,43 @@
                 const pkt = new Uint8Array(msg.length + 3); pkt[0] = c.shuf[0x63]; pkt.set(msg, 2);
                 c.raw(pkt);
                 reply({ ok: true, as: c.myName || '' });
+            } else if (m.cmd === 'servers') {
+                // the game's own server list (#gamemode): value = ws address, label like "US-1 60/200"
+                const sel = document.getElementById('gamemode');
+                const live = [...conns.values()].find(k => k.ws && k.ws.readyState === 1 && /sigmally.com/.test(k.ws.url || ''));
+                reply({ ok: !!sel, servers: sel ? [...sel.options].map(o => ({ url: o.value, label: o.textContent.trim() })) : [], current: live ? serverOf(live.ws) : '' });
+            } else if (m.cmd === 'server') {
+                // switch this tab to another server the way the page's own picker does (setserver), and drop the old
+                // connection. The site connects again only after a real mouse movement on the page: we don't fake that.
+                if (typeof W.setserver !== 'function') return reply({ ok: false, error: 'this page has no server picker' });
+                const url = String(m.url || '').split('://').pop();
+                const sel = document.getElementById('gamemode');
+                if (sel && ![...sel.options].some(o => o.value === url)) return reply({ ok: false, error: 'unknown server ' + url });
+                W.setserver(url);
+                let closed = 0;
+                for (const k of conns.values()) if (k.ws && k.ws.readyState <= 1 && /sigmally.com/.test(k.ws.url || '') && !(k.ws.url || '').includes(url)) { try { k.ws.close(); closed++; } catch (_) { } }
+                hud.flash('server: switching to ' + url.split('.')[0] + ' - move the mouse over this page to join');
+                reply({ ok: true, closed });
+            } else if (m.cmd === 'notice') {
+                // a small notice at the top of the game, for the player (auto-wiggle news)
+                gameNotice(String(m.text || ''), +m.ms || 6000, m.action || null);
+                reply({ ok: true });
+            } else if (m.cmd === 'hold') {
+                // hold SigMod's auto-respawn (its live settings, not the saved ones) while the Lab wiggles another tab; lifts
+                // itself after 5 minutes whatever happens
+                holdRespawn(!!m.on);
+                reply({ ok: true, held: !!m.on });
+            } else if (m.cmd === 'respawn') {
+                // respawn the player the way they would: Continue, then Play; straight spawn packet if that didn't do it
+                const c = [...conns.values()].find(k => k.ready && k.ws.readyState === 1);
+                if (!c) return reply({ ok: false, error: 'no game connection' });
+                if (c.mine.size) return reply({ ok: true, already: true });
+                const vis = el => !!el && el.offsetParent !== null;
+                const cont = document.getElementById('continue_button');
+                if (vis(cont)) cont.click();
+                setTimeout(() => { const p = document.getElementById('play-btn'); if (!c.mine.size && vis(p)) p.click(); }, 700);
+                setTimeout(() => { if (!c.mine.size && c.spawnPacket && c.ws.readyState === 1) c.raw(c.spawnPacket); }, 2500);
+                reply({ ok: true });
             } else if (m.cmd === 'eval') {
                 // debugging aid for the gadget's owner (the link only accepts this computer)
                 let out;
@@ -8934,6 +10699,9 @@
                 aim: conn.botAim ? [Math.round(conn.botAim.x), Math.round(conn.botAim.y)] : null,
                 plan: conn.lastPlan ? { k: conn.lastPlan.k, score: Math.round(conn.lastPlan.score), target: conn.lastPlan.targetId } : null,
                 border: conn.border, center: mine.length ? centroid(mine) : null,
+                // for the Lab map: the area the server shows us (it only sends what is in view) and which server we are on
+                view: conn.viewBox ? [Math.round(conn.viewBox.minX), Math.round(conn.viewBox.minY), Math.round(conn.viewBox.maxX), Math.round(conn.viewBox.maxY)] : null,
+                server: serverOf(conn.ws), nick: (mine[0] && mine[0].name) || '',
             };
         },
         tick(conn) {
@@ -9000,7 +10768,7 @@
                 if (L.bot) cause += ' (server bot)';
             }
             const modes = [...new Set(this.ring.slice(-10).map(f => f.mode))];
-            this.send({ type: 'death', death: { t: Date.now(), cause, killer: L, massBefore: last ? last.mass : 0,
+            this.send({ type: 'death', death: { t: Date.now(), cause, killer: L, massBefore: last ? last.mass : 0, pot: !!(L && conn.potSeen && now() - (conn.potSeen.get(L.name) || -1e9) < 8000),
                 modesBefore: modes, frames: this.ring.slice(), cfg: { ...CFG } } });
             this.ring = [];
         },
@@ -9108,7 +10876,7 @@
         P.translate = function (x, y) {
             const r = tr0.call(this, x, y);
             try {
-                if (this.canvas && this.canvas.id === 'canvas') {
+                if ((Math.abs(x) > 2 || Math.abs(y) > 2) && !W.__megaFrameDrawn4 && this.canvas && this.canvas.id === 'canvas') {
                     const m = this.getTransform();
                     // (not the undo at the end of the frame, which lands back on ~1:1 with no offset)
                     if (Math.abs(m.a - 1) > 1e-3 && m.a === m.d && Math.abs(m.e - this.canvas.width / 2) > 1 && (Math.abs(x) > 2 || Math.abs(y) > 2) && Math.abs(m.e - (this.canvas.width / 2 + m.a * x)) < 2
@@ -9156,8 +10924,10 @@
         g.save();
         try {
             g.setTransform(1, 0, 0, 1, 0, 0);
-            g.shadowColor = 'rgba(255,210,74,1)'; g.shadowBlur = 18 * px; g.strokeStyle = 'rgba(255,210,74,.9)'; g.lineWidth = 3 * px; g.setLineDash([]);
-            for (const c of cells) { g.beginPath(); g.arc(cam.a * c.x + cam.e, cam.d * c.y + cam.f, c.s * cam.a + 3 * px, 0, Math.PI * 2); g.stroke(); }
+            g.setLineDash([]);
+            g.beginPath(); for (const c of cells) { const X0 = cam.a * c.x + cam.e, Y0 = cam.d * c.y + cam.f, R0 = c.s * cam.a + 3 * px; g.moveTo(X0 + R0, Y0); g.arc(X0, Y0, R0, 0, Math.PI * 2); }
+            g.strokeStyle = 'rgba(255,210,74,.25)'; g.lineWidth = 12 * px; g.stroke();
+            g.strokeStyle = 'rgba(255,210,74,.9)'; g.lineWidth = 3 * px; g.stroke();
         } catch (_) { }
         g.restore();
     }
@@ -9182,7 +10952,8 @@
             document.body.appendChild(ovl);
         }
         const r = game.getBoundingClientRect();
-        Object.assign(ovl.style, { display: '', left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' });
+        const rk = r.left + ',' + r.top + ',' + r.width + ',' + r.height;
+        if (ovl.rk !== rk || ovl.style.display === 'none') { ovl.rk = rk; Object.assign(ovl.style, { display: '', left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' }); }
         if (ovl.width !== game.width || ovl.height !== game.height) { ovl.width = game.width; ovl.height = game.height; }
         // draw off-screen; only a finished frame replaces what's on the overlay
         if (!ovl.back) ovl.back = document.createElement('canvas');
@@ -9191,7 +10962,8 @@
         const g = back.getContext('2d');
         g.clearRect(0, 0, back.width, back.height);
         const X = x => cam.a * x + cam.e, Y = y => cam.d * y + cam.f, R = v => v * cam.a, px = ovl.width / Math.max(1, r.width);
-        const PX = c => smoothAt(c.id, c.x, c.y, c.s).x, PY = c => smoothAt(c.id, c.x, c.y, c.s).y;
+        const smF = new Map(), SM = c => { let e = smF.get(c.id); if (!e) { e = smoothAt(c.id, c.x, c.y, c.s); smF.set(c.id, e); } return e; };
+        const PX = c => SM(c).x, PY = c => SM(c).y;
         const me = conn.myCells(); if (!me.length) return;   // (nothing replaced: the last picture stays)
         const big = me.reduce((a, c) => (c.s > a.s ? c : a)), small = me.reduce((a, c) => (c.s < a.s ? c : a));
         const S0 = { ownerCount: new Map(), conn };
@@ -9433,6 +11205,7 @@
             console.log(`[MegaBot] took over from the running copy (${list.length} connection(s))`);
         } catch (err) { console.error('[MegaBot] handoff failed', err); }
     }
+
 
     // console: megaBot.set('dangerWeight', 4)   |   megaBot.reset()
     W.megaBot = { version: VERSION, cfg: CFG, save: saveCfg, set: setCfg, reset: resetCfg, teamers, reconnect, lab, retire,

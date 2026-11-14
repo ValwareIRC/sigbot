@@ -1,0 +1,81 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="prism-gadget://_sdk/base.css">
+<link rel="stylesheet" href="prism-gadget://_sdk/kit.css">
+<script src="prism-gadget://_sdk/prism.js"></script>
+<script src="prism-gadget://_sdk/kit.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box }
+html, body { height: 100%; margin: 0 }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px }
+.num { font-size: 22px; font-weight: 600 }
+.tabs { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; margin-top: 10px }
+.tab { border-left: 3px solid var(--mint) }
+.tab.stale { border-left-color: var(--amber) }
+.tab.silent { border-left-color: var(--rose) }
+.line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0 }
+h3 { margin: 14px 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--text3, #8b93a7); font-weight: 600 }
+</style></head>
+<body>
+<div class="k-app">
+  <div class="k-top">
+    <div class="k-title">Deploy desk</div>
+    <div class="k-grow dim line" id="sub"></div>
+    <button id="go">Check</button>
+    <button id="deploy" class="primary">Deploy to all tabs</button>
+  </div>
+  <div class="k-body" id="body"><div class="k-empty">Checking…</div></div>
+</div>
+<script>
+const { h, mount, ago, toast } = window.kit;
+const body = document.getElementById('body'), sub = document.getElementById('sub');
+const WORD = { ok: 'Up to date', stale: 'Old version', silent: 'Frozen' };
+const PILL = { ok: 'ok', stale: 'warn', silent: 'bad' };
+let data = null;
+
+function render() {
+  const d = data; if (!d) return;
+  if (!d.live) { sub.textContent = ''; return mount(body, h('div', { class: 'k-empty' }, 'No live userscript file found.')); }
+  const wsDiff = d.workspace && d.workspace.version && d.workspace.version !== d.live.version;
+  sub.textContent = `file ${d.live.version} · saved ${ago(d.live.t)}`;
+  const tabs = d.tabs || {};
+  mount(body,
+    h('div', { class: 'cards' },
+      h('div', { class: 'k-card', title: d.live.path }, h('div', { class: 'num' }, d.live.version || '?'),
+        h('div', { class: 'dim line' }, `live file · saved ${ago(d.live.t)} · ${Math.round(d.live.size / 1024)} KB`)),
+      d.workspace ? h('div', { class: 'k-card', title: d.workspace.path }, h('div', { class: 'num' }, d.workspace.version || '?'),
+        h('div', { class: 'line dim' }, 'workspace copy'), wsDiff ? h('div', { class: 'line' }, h('span', { class: 'k-pill warn' }, 'differs from live')) : null) : null,
+      h('div', { class: 'k-card', title: d.backups.map(b => b.v).join(', ') }, h('div', { class: 'num' }, String(d.backups.length)),
+        h('div', { class: 'dim line' }, 'backups: ' + (d.backups.length ? d.backups.slice(0, 4).map(b => b.v).join(', ') + (d.backups.length > 4 ? ' …' : '') : 'none')))),
+    h('h3', null, 'Game tabs' + (tabs.latest ? ' · file is ' + tabs.latest : '')),
+    tabs.error ? h('div', { class: 'k-empty' }, tabs.error)
+      : !tabs.tabs || !tabs.tabs.length ? h('div', { class: 'k-empty' }, 'No game tabs connected to the Lab.')
+      : h('div', { class: 'tabs' }, ...tabs.tabs.map(t => h('div', { class: 'k-card tab ' + t.state },
+          h('div', { class: 'k-row' }, h('span', { class: 'k-dot ' + PILL[t.state] }),
+            h('div', { class: 'k-grow line', style: 'font-weight:600' }, t.browser || t.name || ('#' + t.id)),
+            h('span', { class: 'k-pill ' + PILL[t.state] }, WORD[t.state])),
+          h('div', { class: 'line mono' }, `version ${t.version || '?'} · #${t.id}`),
+          h('div', { class: 'line dim' }, `${t.mode || '—'}${t.mass ? ' · ' + t.mass + ' mass' : ''}${t.hidden ? ' · hidden' : ''}`)))),
+    h('h3', null, 'Deploys'),
+    d.history && d.history.length ? h('div', { class: 'k-log mono' }, ...d.history.slice(0, 8).map(r => h('div', { class: 'line' },
+        `${new Date(r.t).toLocaleTimeString()} ${r.latest}: ` + r.rows.map(x => `${x.browser} ${x.verdict}`).join(', '))))
+      : h('div', { class: 'dim' }, 'None yet. Deploy swaps the file into every answering tab; each tab’s bot restarts for a moment.'));
+}
+async function refresh() {
+  const b = document.getElementById('go'); b.disabled = true;
+  data = await prism.call('refresh'); render(); b.disabled = false;
+}
+async function deployAll() {
+  const btn = document.getElementById('deploy'); btn.disabled = true; btn.textContent = 'Deploying…';
+  try {
+    const r = await prism.call('deploy');
+    toast(r.ok ? 'Deployed ' + (r.latest || '') : (r.error || 'some tabs did not come back — see the list'));
+    data = await prism.call('refresh'); render();
+  } finally { btn.disabled = false; btn.textContent = 'Deploy to all tabs'; }
+}
+document.getElementById('go').onclick = refresh;
+document.getElementById('deploy').onclick = deployAll;
+prism.on('deploy', p => { sub.textContent = p.phase === 'swap' ? `swapping ${p.done}/${p.of} tabs…` : `waiting for tabs to come back (${p.try || 0})…`; });
+prism.ready(async () => { data = await prism.call('state'); render(); refresh(); setInterval(refresh, 30000); });
+</script>
+</body></html>

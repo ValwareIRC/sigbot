@@ -1,0 +1,446 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="prism-gadget://_sdk/base.css">
+<script src="prism-gadget://_sdk/prism.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box }
+  html, body { height: 100%; margin: 0 }
+  body { display: flex; flex-direction: column; overflow: hidden; font-size: 13px }
+  .top { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,.08) }
+  .top h1 { font-size: 14px; margin: 0; font-weight: 600; white-space: nowrap }
+  .top .grow { flex: 1; min-width: 0 }
+  .top select, .top button { font: inherit }
+  .status { color: var(--dim, #8a93a3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0 }
+  .main { flex: 1; display: flex; flex-wrap: wrap; min-height: 0; overflow: auto }
+  .mapbox { flex: 3 1 320px; min-width: 0; min-height: 300px; position: relative }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab }
+  canvas.drag { cursor: grabbing }
+  .side { flex: 1 1 230px; min-width: 0; max-height: 100%; overflow: auto; padding: 8px; border-left: 1px solid rgba(255,255,255,.08) }
+  .tab { padding: 7px 8px; border-radius: 6px; cursor: pointer; margin-bottom: 6px; background: rgba(255,255,255,.03); border: 1px solid transparent }
+  .tab:hover { border-color: rgba(255,255,255,.12) }
+  .tab.sel { border-color: var(--accent, #6aa9ff) }
+  .tab.stale { opacity: .45 }
+  .row { display: flex; gap: 6px; align-items: center; min-width: 0 }
+  .dot { width: 10px; height: 10px; border-radius: 50%; flex: none }
+  .name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1 }
+  .mass { white-space: nowrap; font-variant-numeric: tabular-nums }
+  .sub { color: var(--dim, #8a93a3); font-size: 12px; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+  .around { font-size: 12px; margin-top: 3px; line-height: 1.4 }
+  .bad { color: var(--rose, #ff6b81) } .good { color: var(--mint, #4fd1a5) } .warn { color: var(--amber, #f5b841) }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 6px 10px; font-size: 12px; color: var(--dim, #8a93a3); border-top: 1px solid rgba(255,255,255,.08) }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap }
+  .empty { padding: 16px; color: var(--dim, #8a93a3) }
+  .servers { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 10px; border-bottom: 1px solid rgba(255,255,255,.08) }
+  .servers .lbl { color: var(--dim, #8a93a3); white-space: nowrap }
+  .servers button { font: inherit; white-space: nowrap }
+  .servers button.here { border-color: var(--accent, #6aa9ff); color: var(--accent, #6aa9ff) }
+  .servers button.confirm { border-color: var(--amber, #f5b841); color: var(--amber, #f5b841) }
+  .servers .note { color: var(--dim, #8a93a3); font-size: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 160px }
+  .tab.waiting { border-style: dashed; border-color: var(--amber, #f5b841) }
+  .captcha { display: none; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 10px; background: rgba(255,93,108,.12); border-bottom: 1px solid rgba(255,93,108,.4) }
+  .captcha.on { display: flex }
+  .captcha .msg { color: var(--rose, #ff6b81); font-weight: 600; min-width: 0; flex: 1 1 200px }
+  .captcha button { font: inherit; white-space: nowrap }
+  .side { display: flex; flex-direction: column; gap: 8px }
+  #tabs { flex: 1 1 auto; min-height: 80px; overflow: auto }
+  .chat { flex: 0 0 auto; display: flex; flex-direction: column; min-height: 0; border-top: 1px solid rgba(255,255,255,.08); padding-top: 8px }
+  .chat h2 { font-size: 12px; margin: 0 0 6px; font-weight: 600; color: var(--dim, #8a93a3); text-transform: uppercase; letter-spacing: .04em }
+  .lines { height: 240px; max-height: 40vh; overflow: auto; font-size: 12px; line-height: 1.45; background: rgba(0,0,0,.18); border-radius: 6px; padding: 6px 8px }
+  .line { overflow-wrap: anywhere }
+  .line .tm { color: var(--dim, #8a93a3); font-variant-numeric: tabular-nums; margin-right: 4px }
+  .line .who { font-weight: 600; margin-right: 4px }
+  .line.ours { background: rgba(106,169,255,.08); border-radius: 4px }
+  .line.sys { color: var(--dim, #8a93a3); font-style: italic }
+  .say { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; align-items: center }
+  .say select { font: inherit; max-width: 100%; min-width: 0; flex: 1 1 120px }
+  .say input { font: inherit; flex: 3 1 160px; min-width: 0 }
+  .say button { font: inherit }
+  .hint { font-size: 11px; color: var(--dim, #8a93a3); margin-top: 4px; min-height: 14px }
+  .wirebox { flex: 0 0 auto; border-top: 1px solid rgba(255,255,255,.08); padding-top: 8px }
+  .wirebox summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--dim, #8a93a3); text-transform: uppercase; letter-spacing: .04em }
+  .wirelist { max-height: 30vh; overflow: auto; font-size: 11px; line-height: 1.4; margin-top: 6px; background: rgba(0,0,0,.18); border-radius: 6px; padding: 6px 8px }
+  .wire { overflow-wrap: anywhere; padding: 2px 0; border-bottom: 1px solid rgba(255,255,255,.04) }
+  .wire.loud { color: var(--rose, #ff6b81); font-weight: 600 }
+  .wire .k { color: var(--accent, #6aa9ff); margin-right: 4px }
+</style>
+</head>
+<body>
+<div class="top">
+  <h1>Sigmally map</h1>
+  <select id="server" title="Server"></select>
+  <button id="fit">Whole map</button>
+  <label class="row" style="gap:4px;white-space:nowrap"><input type="checkbox" id="names" checked> names</label>
+  <span class="status grow" id="status">Connecting to the Sigmally Lab…</span>
+</div>
+<div class="captcha" id="captcha"><span class="msg" id="captchaMsg"></span><span id="captchaBtns"></span></div>
+<div class="servers">
+  <span class="lbl">Move every tab to:</span>
+  <span id="srvBtns"><span class="dim">loading servers…</span></span>
+  <button id="srvRefresh" title="Refresh player counts">↻</button>
+  <label class="row" style="gap:4px;white-space:nowrap" title="When a tab is connected but not in a game, bring its window up and move the real mouse over it so the site lets it join"><input type="checkbox" id="autoWig"> auto-wiggle tabs that need it</label>
+  <span class="note" id="srvNote"></span>
+</div>
+<div class="main">
+  <div class="mapbox"><canvas id="c"></canvas></div>
+  <div class="side">
+    <div id="tabs"></div>
+    <div class="chat">
+      <h2 id="chatTitle">Chat</h2>
+      <div class="lines" id="lines"><div class="dim">No chat yet.</div></div>
+      <div class="say">
+        <select id="sendAs" title="Reply as"></select>
+        <input id="msg" maxlength="120" placeholder="Say something…" autocomplete="off">
+        <button id="sendBtn" class="primary">Send</button>
+      </div>
+      <div class="hint" id="hint"></div>
+    </div>
+    <details class="wirebox" id="wirebox">
+      <summary id="wireTitle">Wire watch</summary>
+      <div class="dim" style="font-size:11px;margin-top:4px">Everything on connections that aren't the game itself (SigMod's server and so on), new kinds of game packet, scripts closing or opening a page, and tabs going away. Each new kind shows here once; red ones every time. All of it is kept in the Lab's wire.jsonl.</div>
+      <div class="wirelist" id="wirelist"><div class="dim">Nothing yet.</div></div>
+    </details>
+  </div>
+</div>
+<div class="legend">
+  <span><i class="dot" style="background:#ff5d6c"></i>can eat us</span>
+  <span><i class="dot" style="background:#4fd1a5"></i>we can eat</span>
+  <span><i class="dot" style="background:#9aa3b2"></i>neither</span>
+  <span><i class="dot" style="background:#ffd24a"></i>teammate</span>
+  <span><i class="dot" style="background:#b48cff"></i>master / VIP</span>
+  <span><i class="dot" style="background:#3fbf3f"></i>virus</span>
+  <span>boxes: what each tab can see</span>
+</div>
+<script>
+const LAB = 'http://127.0.0.1:47800';
+const ROLE = { me: 0, threat: 1, prey: 2, virus: 3, blob: 4, master: 5, neutral: 6, pellet: 7, mate: 8 };
+const ROLE_COLOR = { 1: '#ff5d6c', 2: '#4fd1a5', 3: '#3fbf3f', 4: '#c9d1dc', 5: '#b48cff', 6: '#9aa3b2', 8: '#ffd24a' };
+const TAB_COLORS = ['#6aa9ff', '#ff9f43', '#f368e0', '#48dbfb', '#feca57', '#1dd1a1', '#ff6b6b', '#c8d6e5', '#a29bfe', '#55efc4'];
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+const side = document.getElementById('tabs'), statusEl = document.getElementById('status'), serverSel = document.getElementById('server');
+let data = null, server = '', selected = null, colorOf = new Map(), cam = null, lastOk = 0, busy = false;
+const fmt = m => m >= 1000 ? (m / 1000).toFixed(m >= 10000 ? 0 : 1) + 'k' : String(Math.round(m));
+const mass = s => s * s / 100;
+const short = u => u.replace(/^wss?:\/\//, '').replace(/\/ws\/?$/, '').replace(/\/$/, '');
+
+function tabColor(id) { if (!colorOf.has(id)) colorOf.set(id, TAB_COLORS[colorOf.size % TAB_COLORS.length]); return colorOf.get(id); }
+function tabsHere() { return data ? data.tabs.filter(t => t.server === server) : []; }
+function border() { const t = tabsHere().find(t => t.border); return t ? t.border : { minX: -17071, minY: -17071, maxX: 17071, maxY: 17071 }; }
+
+// camera: world point at the canvas centre and world units per pixel
+function fitWhole() { const b = border(); fitBox(b.minX, b.minY, b.maxX, b.maxY, 1.02); }
+function fitBox(x0, y0, x1, y1, pad) {
+  const w = cv.clientWidth || 1, h = cv.clientHeight || 1;
+  cam = { x: (x0 + x1) / 2, y: (y0 + y1) / 2, upp: Math.max((x1 - x0) / w, (y1 - y0) / h) * (pad || 1.15) };
+}
+const sx = x => (x - cam.x) / cam.upp + cv.clientWidth / 2;
+const sy = y => (y - cam.y) / cam.upp + cv.clientHeight / 2;
+
+function draw() {
+  const dpr = window.devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
+  if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#0b0f16'; ctx.fillRect(0, 0, w, h);
+  if (!cam) fitWhole();
+  const b = border();
+  // map and a grid every 2000
+  ctx.fillStyle = '#111824'; ctx.fillRect(sx(b.minX), sy(b.minY), (b.maxX - b.minX) / cam.upp, (b.maxY - b.minY) / cam.upp);
+  ctx.strokeStyle = 'rgba(255,255,255,.05)'; ctx.lineWidth = 1; ctx.beginPath();
+  for (let x = Math.ceil(b.minX / 2000) * 2000; x <= b.maxX; x += 2000) { ctx.moveTo(sx(x), sy(b.minY)); ctx.lineTo(sx(x), sy(b.maxY)); }
+  for (let y = Math.ceil(b.minY / 2000) * 2000; y <= b.maxY; y += 2000) { ctx.moveTo(sx(b.minX), sy(y)); ctx.lineTo(sx(b.maxX), sy(y)); }
+  ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,255,255,.25)'; ctx.strokeRect(sx(b.minX), sy(b.minY), (b.maxX - b.minX) / cam.upp, (b.maxY - b.minY) / cam.upp);
+  const tabs = tabsHere(), now = Date.now();
+  // each tab's view area
+  for (const t of tabs) {
+    if (!t.view) continue;
+    const [x0, y0, x1, y1] = t.view, col = tabColor(t.id), stale = now - t.t > 2500;
+    ctx.globalAlpha = stale ? 0.3 : 1;
+    ctx.fillStyle = col + '14'; ctx.fillRect(sx(x0), sy(y0), (x1 - x0) / cam.upp, (y1 - y0) / cam.upp);
+    ctx.strokeStyle = col; ctx.lineWidth = selected === t.id ? 2.5 : 1.2; ctx.setLineDash(stale ? [4, 4] : []);
+    ctx.strokeRect(sx(x0), sy(y0), (x1 - x0) / cam.upp, (y1 - y0) / cam.upp); ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
+  }
+  // cells: everything each tab sees, culled to that tab's view; one copy per cell (the freshest)
+  const cells = new Map();
+  for (const t of tabs.slice().sort((a, b) => a.t - b.t)) {
+    const v = t.view;
+    for (const r of t.cells) {
+      if (v && (r[1] < v[0] - 50 || r[1] > v[2] + 50 || r[2] < v[1] - 50 || r[2] > v[3] + 50)) continue;
+      cells.set(r[0], { x: r[1], y: r[2], s: r[3], role: r[4], name: r[5] || '', tab: t.id });
+    }
+  }
+  const list = [...cells.values()].sort((a, b) => a.s - b.s);
+  const showNames = document.getElementById('names').checked;
+  for (const c of list) {
+    const r = Math.max(c.role === ROLE.blob ? 0.8 : 1.6, c.s / cam.upp), x = sx(c.x), y = sy(c.y);
+    if (x < -r || y < -r || x > w + r || y > h + r) continue;
+    if (c.role === ROLE.virus) {
+      ctx.fillStyle = '#3fbf3f'; ctx.strokeStyle = '#2a8a2a'; ctx.lineWidth = 1;
+      ctx.beginPath();
+      const n = 14; for (let i = 0; i <= n * 2; i++) { const a = i / (n * 2) * Math.PI * 2, rr = i % 2 ? r : r * 1.12; ctx.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr); }
+      ctx.fill(); continue;
+    }
+    const col = c.role === ROLE.me ? tabColor(c.tab) : (ROLE_COLOR[c.role] || '#9aa3b2');
+    ctx.fillStyle = col; ctx.globalAlpha = c.role === ROLE.blob ? 0.6 : 0.9;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); ctx.globalAlpha = 1;
+    if (c.role === ROLE.me) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 1; ctx.stroke(); }
+    if (showNames && c.role !== ROLE.blob && r > 6 && c.name) {
+      ctx.fillStyle = '#e8edf5'; ctx.font = Math.min(14, Math.max(10, r * 0.5)) + 'px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(c.name.slice(0, 18), x, y);
+    }
+  }
+  // tab labels at the corner of their view
+  ctx.font = '11px system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+  for (const t of tabs) {
+    if (!t.view) continue;
+    const label = t.browser + ' #' + t.id + ' · ' + fmt(t.mass);
+    const x = sx(t.view[0]), y = sy(t.view[1]) - 2;
+    ctx.fillStyle = 'rgba(11,15,22,.75)'; const tw = ctx.measureText(label).width; ctx.fillRect(x, y - 13, tw + 6, 14);
+    ctx.fillStyle = tabColor(t.id); ctx.fillText(label, x + 3, y);
+  }
+}
+
+// what is around each tab: from its own cells
+function around(t) {
+  let threats = [], prey = [], viruses = 0, mates = 0;
+  for (const r of t.cells) {
+    if (r[4] === ROLE.threat) threats.push(r); else if (r[4] === ROLE.prey) prey.push(r); else if (r[4] === ROLE.virus) viruses++; else if (r[4] === ROLE.mate) mates++;
+  }
+  const big = arr => arr.reduce((a, r) => (!a || r[3] > a[3] ? r : a), null);
+  const bt = big(threats), bp = big(prey);
+  const parts = [];
+  if (threats.length) parts.push(`<span class="bad">${threats.length} that can eat us${bt && bt[5] ? ' (biggest ' + esc(bt[5]) + ', ' + fmt(mass(bt[3])) + ')' : ''}</span>`);
+  if (prey.length) parts.push(`<span class="good">${prey.length} we can eat${bp && bp[5] ? ' (' + esc(bp[5]) + ', ' + fmt(mass(bp[3])) + ')' : ''}</span>`);
+  if (mates) parts.push(`<span class="warn">${mates} teammate piece${mates > 1 ? 's' : ''}</span>`);
+  parts.push(`${viruses} virus${viruses === 1 ? '' : 'es'}`);
+  return parts.join(' · ');
+}
+const esc = s => String(s).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+
+function renderSide() {
+  const tabs = tabsHere().sort((a, b) => b.mass - a.mass), now = Date.now();
+  if (!data) { side.innerHTML = '<div class="empty">Waiting for the Sigmally Lab.</div>'; return; }
+  if (!tabs.length && !(data.waiting || []).length) { side.innerHTML = '<div class="empty">No game tabs are playing right now.</div>'; return; }
+  const waitingHtml = (data.waiting || []).map(w => `<div class="tab waiting"><div class="row"><i class="dot" style="background:var(--amber, #f5b841)"></i><span class="name">${esc(w.browser)} #${w.id}</span><button class="wig" data-wig="${w.id}">Wiggle now</button></div>
+    <div class="sub">${w.want ? 'set to ' + esc(serverName(w.want)) + ' - ' : ''}waiting: move the mouse over this tab to join</div></div>`).join('');
+  side.innerHTML = waitingHtml + tabs.map(t => `<div class="tab${selected === t.id ? ' sel' : ''}${now - t.t > 2500 ? ' stale' : ''}" data-id="${t.id}">
+    <div class="row"><i class="dot" style="background:${tabColor(t.id)}"></i><span class="name">${esc(t.browser)} #${t.id}${t.nick ? ' · ' + esc(t.nick) : ''}</span><span class="mass">${fmt(t.mass)}${t.pieces > 1 ? ' / ' + t.pieces + ' pcs' : ''}</span></div>
+    <div class="sub">${t.bot ? '' : 'you (bot off) · '}${esc(t.mode || (t.pieces ? '' : 'dead'))}</div>
+    <div class="around">${t.pieces ? around(t) : '<span class="dim">not in the game</span>'}</div>
+  </div>`).join('');
+}
+side.addEventListener('click', async e => {
+  const wb = e.target.closest('[data-wig]');
+  if (wb) {
+    wb.disabled = true; wb.textContent = 'Wiggling…';
+    try { const r = await prism.call('wiggle', { now: +wb.dataset.wig }); srvNote.textContent = r && r.ok ? 'Wiggled #' + wb.dataset.wig + ' - it should join in a moment' : 'Wiggle: ' + ((r && r.error) || 'no answer'); }
+    catch (err) { srvNote.textContent = 'Wiggle: ' + err.message; }
+    return;
+  }
+  const el = e.target.closest('.tab'); if (!el || el.classList.contains('waiting')) return;
+  const id = +el.dataset.id, t = tabsHere().find(t => t.id === id);
+  if (selected === id) { selected = null; fitWhole(); }
+  else { selected = id; if (t && t.view) fitBox(t.view[0], t.view[1], t.view[2], t.view[3], 1.6); }
+  renderSide(); draw();
+});
+
+function renderServers() {
+  const counts = new Map();
+  for (const t of data.tabs) counts.set(t.server, (counts.get(t.server) || 0) + 1);
+  if (!counts.has(server)) server = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || '';
+  const opts = [...counts.entries()].map(([s, n]) => `<option value="${esc(s)}"${s === server ? ' selected' : ''}>${esc(short(s) || 'unknown')} (${n} tab${n > 1 ? 's' : ''})</option>`).join('');
+  if (serverSel.innerHTML !== opts) serverSel.innerHTML = opts;
+  serverSel.style.display = counts.size > 1 ? '' : 'none';
+}
+serverSel.addEventListener('change', () => { server = serverSel.value; selected = null; fitWhole(); renderSide(); draw(); renderSendAs(); shownKey = ''; renderChat(); });
+
+async function poll() {
+  if (busy) return; busy = true;
+  try {
+    const r = await fetch(LAB + '/map', { cache: 'no-store' });
+    data = await r.json(); lastOk = Date.now();
+    renderServers();
+    const n = tabsHere().length;
+    statusEl.textContent = n ? `${n} tab${n > 1 ? 's' : ''} on ${short(server)}` : 'No game tabs playing';
+    if (selected && !tabsHere().some(t => t.id === selected)) selected = null;
+    renderSide(); draw(); renderSendAs(); renderChat(); renderServerBtns();
+  } catch (_) {
+    if (Date.now() - lastOk > 3000) { statusEl.textContent = 'Can\'t reach the Sigmally Lab (is its panel running?)'; data = null; renderSide(); draw(); }
+  } finally { busy = false; }
+}
+
+// zoom with the wheel (around the pointer), drag to pan, double-click for the whole map
+cv.addEventListener('wheel', e => {
+  e.preventDefault(); if (!cam) return;
+  const rect = cv.getBoundingClientRect(), px = e.clientX - rect.left, py = e.clientY - rect.top;
+  const wx = (px - cv.clientWidth / 2) * cam.upp + cam.x, wy = (py - cv.clientHeight / 2) * cam.upp + cam.y;
+  const k = Math.exp(e.deltaY * 0.0015); cam.upp = Math.min(200, Math.max(0.5, cam.upp * k));
+  cam.x = wx - (px - cv.clientWidth / 2) * cam.upp; cam.y = wy - (py - cv.clientHeight / 2) * cam.upp; draw();
+}, { passive: false });
+let drag = null;
+cv.addEventListener('pointerdown', e => { drag = { x: e.clientX, y: e.clientY, cx: cam.x, cy: cam.y }; cv.setPointerCapture(e.pointerId); cv.classList.add('drag'); });
+cv.addEventListener('pointermove', e => { if (!drag) return; cam.x = drag.cx - (e.clientX - drag.x) * cam.upp; cam.y = drag.cy - (e.clientY - drag.y) * cam.upp; draw(); });
+cv.addEventListener('pointerup', () => { drag = null; cv.classList.remove('drag'); });
+cv.addEventListener('dblclick', () => { selected = null; fitWhole(); renderSide(); draw(); });
+document.getElementById('fit').addEventListener('click', () => { selected = null; fitWhole(); renderSide(); draw(); });
+document.getElementById('names').addEventListener('change', draw);
+new ResizeObserver(() => { if (!selected) fitWhole(); draw(); }).observe(cv);
+
+// ---- server switcher: every tab at once. The site joins a server only after a real mouse movement on the page, so
+// after a switch each tab waits on its menu until the mouse passes over it (we don't fake that).
+const srvBtns = document.getElementById('srvBtns'), srvNote = document.getElementById('srvNote');
+let servers = [], armed = null, armedAt = 0;
+async function loadServers() {
+  try { const r = await prism.call('servers'); if (r && r.ok) { servers = r.servers; renderServerBtns(); } else srvNote.textContent = (r && r.error) || 'Couldn\'t list the servers'; }
+  catch (e) { srvNote.textContent = 'Couldn\'t list the servers'; }
+}
+function serverName(u) { const s = servers.find(x => x.url === u || ('wss://' + x.url) === u); return s ? s.label.replace(/\s+\d+\/\d+$/, '') : short(u || ''); }
+function renderServerBtns() {
+  if (!servers.length) return;
+  const here = new Set((data ? data.tabs : []).map(t => short(t.server)));
+  srvBtns.innerHTML = servers.map(s => {
+    const id = short(s.url), isArmed = armed === s.url && Date.now() - armedAt < 4000;
+    return `<button data-url="${esc(s.url)}" class="${here.has(id) ? 'here' : ''}${isArmed ? ' confirm' : ''}" title="${esc(id)}">${isArmed ? 'Click again: move all to ' + esc(s.label) : esc(s.label)}</button>`;
+  }).join(' ');
+}
+srvBtns.addEventListener('click', async e => {
+  const b = e.target.closest('button'); if (!b) return;
+  const url = b.dataset.url;
+  if (armed !== url || Date.now() - armedAt > 4000) { armed = url; armedAt = Date.now(); renderServerBtns(); setTimeout(renderServerBtns, 4100); return; }
+  armed = null; renderServerBtns();
+  srvNote.textContent = 'Switching every tab to ' + serverName(url) + '…';
+  try {
+    const r = await prism.call('switchTo', { url });
+    if (!r || !r.ok) { srvNote.textContent = 'Not switched: ' + ((r && r.error) || 'no answer'); return; }
+    const ok = r.results.filter(x => x.ok).length, bad = r.results.filter(x => !x.ok);
+    srvNote.textContent = `${ok} tab${ok === 1 ? '' : 's'} set to ${serverName(url)} - move the mouse over each one to join` + (bad.length ? ` (${bad.length} didn't answer)` : '');
+  } catch (err) { srvNote.textContent = 'Not switched: ' + err.message; }
+});
+document.getElementById('srvRefresh').addEventListener('click', loadServers);
+// auto-wiggle: the Lab does it (and remembers on/off); we show the switch and the latest thing it did
+const autoWig = document.getElementById('autoWig');
+let wigSeen = 0;
+async function pollWiggle() {
+  try {
+    const r = await prism.call('wiggle', {});
+    if (!r || !r.ok) return;
+    autoWig.checked = !!r.auto;
+    const last = r.log && r.log[r.log.length - 1];
+    if (last && last.t > wigSeen) { wigSeen = last.t; srvNote.textContent = 'Wiggle #' + last.id + ': ' + last.text; }
+  } catch (_) { }
+}
+autoWig.addEventListener('change', async () => { try { await prism.call('wiggle', { auto: autoWig.checked }); srvNote.textContent = 'Auto-wiggle ' + (autoWig.checked ? 'on' : 'off'); } catch (_) { } });
+
+// ---- captchas: a tab showing a Cloudflare / reCAPTCHA check needs you to click it; one button brings it up
+const capEl = document.getElementById('captcha'), capMsg = document.getElementById('captchaMsg'), capBtns = document.getElementById('captchaBtns');
+async function pollCaptcha() {
+  try {
+    const r = await prism.call('captcha', {});
+    const list = r && r.ok ? r.tabs : [];
+    capEl.classList.toggle('on', list.length > 0);
+    if (!list.length) return;
+    capMsg.textContent = list.length === 1 ? 'Captcha waiting in ' + list[0].browser + ' #' + list[0].id + ' - click it to keep that tab playing'
+      : list.length + ' tabs are waiting on a captcha';
+    const html = list.map(t => `<button class="primary" data-front="${t.id}">Take me to ${esc(t.browser)} #${t.id}</button>`).join(' ');
+    if (capBtns.dataset.html !== html) { capBtns.innerHTML = html; capBtns.dataset.html = html; }
+  } catch (_) { }
+}
+capBtns.addEventListener('click', async e => {
+  const b = e.target.closest('[data-front]'); if (!b) return;
+  try { const r = await prism.call('captcha', { front: +b.dataset.front }); if (!r || !r.ok) capMsg.textContent = 'Couldn\'t bring it up: ' + ((r && r.error) || 'no answer'); }
+  catch (err) { capMsg.textContent = 'Couldn\'t bring it up: ' + err.message; }
+});
+
+// ---- wire watch
+const wireList = document.getElementById('wirelist'), wireTitle = document.getElementById('wireTitle');
+let wireRows = [], wireSince = 0;
+const LOUD = /^(page-(close|open|assign|replace)|game-text|beacon)/;
+async function pollWire() {
+  try {
+    const r = await prism.call('wire', { since: wireSince });
+    if (!r || !r.ok) return;
+    for (const e of r.flags) if (e.t > wireSince) wireRows.push(e);
+    if (r.flags.length) wireSince = Math.max(wireSince, ...r.flags.map(e => e.t));
+    if (wireRows.length > 200) wireRows = wireRows.slice(-200);
+    const loud = wireRows.filter(e => LOUD.test(e.kind)).length;
+    wireTitle.textContent = 'Wire watch · ' + wireRows.length + ' noted' + (loud ? ' · ' + loud + ' to look at' : '');
+    wireTitle.style.color = loud ? 'var(--rose, #ff6b81)' : '';
+    wireList.innerHTML = wireRows.length ? wireRows.slice().reverse().map(e => {
+      const what = e.what || e.text || e.ascii || (e.args ? e.args.join(', ') : '') || (e.state || '') || (e.count ? e.count + ' dropped' : '');
+      return `<div class="wire${LOUD.test(e.kind) ? ' loud' : ''}"><span class="dim">${hhmm(e.t)}</span> <span class="k">${esc(e.browser || '')}${e.tab ? ' #' + e.tab : ''} ${esc(e.kind)}</span>${esc(String(what).slice(0, 220))}${e.by ? '<div class="dim">called by: ' + esc(e.by) + '</div>' : ''}</div>`;
+    }).join('') : '<div class="dim">Nothing yet.</div>';
+  } catch (_) { }
+}
+
+// ---- chat: the chat of the server on view; replies go out through the tab picked (remembered by browser name,
+// since a tab's number changes whenever the bot is updated)
+const linesEl = document.getElementById('lines'), sendAs = document.getElementById('sendAs'), msgEl = document.getElementById('msg'), hint = document.getElementById('hint');
+let chat = [], chatSince = 0, chatBusy = false, prefBrowser = 'Firefox', prefId = null, shownKey = '';
+const colorCss = c => typeof c === 'number' ? '#' + (c >>> 0).toString(16).padStart(6, '0').slice(-6) : (typeof c === 'string' && c ? c : '#e8edf5');
+const hhmm = t => { const d = new Date(t); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); };
+async function pollChat() {
+  if (chatBusy) return; chatBusy = true;
+  try {
+    const r = await prism.call('chat', { since: chatSince });
+    if (r && r.ok) {
+      for (const l of r.lines) if (l.t > chatSince) chat.push(l);
+      if (r.lines.length) chatSince = Math.max(chatSince, ...r.lines.map(l => l.t));
+      if (chat.length > 300) chat = chat.slice(-300);
+      renderChat();
+    }
+  } catch (_) { } finally { chatBusy = false; }
+}
+function renderChat() {
+  const here = chat.filter(l => !server || !l.server || l.server === server);
+  const ours = new Set(tabsHere().map(t => t.nick).filter(Boolean));
+  document.getElementById('chatTitle').textContent = 'Chat' + (server ? ' · ' + short(server) : '');
+  const key = here.length + '|' + (here.length ? here[here.length - 1].t : 0) + '|' + [...ours].join(',');
+  if (key === shownKey) return; shownKey = key;
+  const atBottom = linesEl.scrollHeight - linesEl.scrollTop - linesEl.clientHeight < 30;
+  linesEl.innerHTML = here.length ? here.slice(-150).map(l => l.fromServer || !l.name
+      ? `<div class="line sys"><span class="tm">${hhmm(l.t)}</span>${esc(l.text)}</div>`
+      : `<div class="line${ours.has(l.name) ? ' ours' : ''}"><span class="tm">${hhmm(l.t)}</span><span class="who" style="color:${colorCss(l.color)}">${esc(l.name)}</span>${esc(l.text)}</div>`).join('')
+    : '<div class="dim">No chat yet on this server.</div>';
+  if (atBottom) linesEl.scrollTop = linesEl.scrollHeight;
+}
+function renderSendAs() {
+  const tabs = tabsHere();
+  // the remembered tab if it's still here, else the first tab of the remembered browser, else the first tab
+  let pick = tabs.find(t => t.id === prefId) || tabs.find(t => t.browser === prefBrowser) || tabs[0];
+  const opts = tabs.map(t => `<option value="${t.id}"${pick && t.id === pick.id ? ' selected' : ''}>${esc(t.browser)} #${t.id}${t.nick ? ' · ' + esc(t.nick) : ''}</option>`).join('');
+  if (sendAs.dataset.opts !== opts) { sendAs.innerHTML = opts || '<option value="">no tab to send from</option>'; sendAs.dataset.opts = opts; }
+  if (pick) prefId = pick.id;
+  sendAs.disabled = !tabs.length; document.getElementById('sendBtn').disabled = !tabs.length;
+}
+sendAs.addEventListener('change', () => {
+  const t = tabsHere().find(t => t.id === +sendAs.value);
+  if (t) { prefId = t.id; prefBrowser = t.browser; prism.state.set('sendAs', t.browser); hint.textContent = 'Replies go out from ' + t.browser + ' (remembered).'; }
+});
+async function send() {
+  const text = msgEl.value.trim(); if (!text) return;
+  const id = +sendAs.value; if (!id) { hint.textContent = 'No game tab to send from.'; return; }
+  msgEl.disabled = true;
+  try {
+    const r = await prism.call('send', { id, text });
+    if (r && r.ok) { msgEl.value = ''; hint.textContent = 'Sent' + (r.as ? ' as ' + r.as : '') + '.'; setTimeout(pollChat, 400); }
+    else hint.textContent = 'Not sent: ' + ((r && r.error) || 'no answer from the tab');
+  } catch (e) { hint.textContent = 'Not sent: ' + e.message; }
+  finally { msgEl.disabled = false; msgEl.focus(); }
+}
+document.getElementById('sendBtn').addEventListener('click', send);
+msgEl.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); send(); } });
+
+prism.ready(async () => {
+  try { prefBrowser = await prism.state.get('sendAs', 'Firefox') || 'Firefox'; } catch (_) { }
+  renderSide(); draw(); poll(); setInterval(poll, 250);
+  pollChat(); setInterval(pollChat, 1000);
+  loadServers(); setInterval(loadServers, 30000);
+  pollWiggle(); setInterval(pollWiggle, 2000);
+  pollCaptcha(); setInterval(pollCaptcha, 1500);
+  pollWire(); setInterval(pollWire, 3000);
+});
+</script>
+</body>
+</html>

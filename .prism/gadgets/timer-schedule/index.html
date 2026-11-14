@@ -1,0 +1,63 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<link rel="stylesheet" href="prism-gadget://_sdk/base.css">
+<link rel="stylesheet" href="prism-gadget://_sdk/kit.css">
+<script src="prism-gadget://_sdk/prism.js"></script>
+<script src="prism-gadget://_sdk/kit.js"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box }
+html, body { height: 100%; margin: 0 }
+.k-body { overflow: auto; min-height: 0 }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; margin-bottom: 12px }
+.stat { padding: 10px; border-radius: 8px; background: #ffffff0a }
+.stat b { display: block; font-size: 22px }
+.stat span { font-size: 12px; opacity: .7 }
+.list { display: flex; flex-direction: column; gap: 6px }
+.item { display: flex; gap: 10px; align-items: center; padding: 8px 10px; border-radius: 8px; background: #ffffff08; min-width: 0; border-left: 3px solid transparent }
+.item.arrived { border-left-color: var(--mint) }
+.item.missed { border-left-color: var(--rose) }
+.item.due { border-left-color: var(--amber) }
+.item.waiting { border-left-color: #ffffff30 }
+.item.cancelled { opacity: .5 }
+.time { font-variant-numeric: tabular-nums; font-weight: 600; min-width: 46px }
+.what { flex: 1; min-width: 0 }
+.what .n { white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+.what .d { font-size: 12px; opacity: .65; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+.pill { font-size: 12px; white-space: nowrap }
+.next { font-size: 13px; opacity: .8; margin-bottom: 10px }
+</style></head>
+<body>
+<div class="k-app">
+  <div class="k-top"><div class="k-title">Timer Schedule</div><div class="k-grow dim" id="sub" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></div></div>
+  <div class="k-body" id="body"><div class="k-empty">Loading…</div></div>
+</div>
+<script>
+const { h, mount } = window.kit;
+const hm = t => t ? new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '–';
+const WORD = { arrived: 'Arrived', missed: 'Missed', due: 'Due now', waiting: 'Waiting', cancelled: 'Cancelled', unknown: '?' };
+const PILL = { arrived: 'ok', missed: 'bad', due: 'warn', waiting: '', cancelled: '', unknown: '' };
+function until(t) { const m = Math.round((t - Date.now()) / 60000); return m <= 0 ? 'now' : m < 60 ? `in ${m} min` : `in ${Math.floor(m / 60)} h ${m % 60} min`; }
+function render(v) {
+  const body = document.getElementById('body');
+  document.getElementById('sub').textContent = v.rows.length ? `${v.rows.length} run${v.rows.length > 1 ? 's' : ''} tracked` : '';
+  if (!v.rows.length) return mount(body, h('div', { class: 'k-empty' }, 'No timers tracked yet.'));
+  const c = v.counts;
+  mount(body,
+    h('div', { class: 'stats' },
+      h('div', { class: 'stat' }, h('b', { style: 'color:var(--mint)' }, String(c.arrived)), h('span', {}, 'arrived')),
+      h('div', { class: 'stat' }, h('b', { style: c.missed ? 'color:var(--rose)' : '' }, String(c.missed)), h('span', {}, 'missed (silently dropped)')),
+      h('div', { class: 'stat' }, h('b', { style: c.due ? 'color:var(--amber)' : '' }, String(c.due)), h('span', {}, 'due now')),
+      h('div', { class: 'stat' }, h('b', {}, String(c.waiting)), h('span', {}, 'waiting'))),
+    v.next ? h('div', { class: 'next' }, `Next: ${hm(v.next.due)} (${until(v.next.due)}) — ${v.next.name}`) : null,
+    h('div', { class: 'list' }, ...v.rows.map(r => h('div', { class: 'item ' + r.status },
+      h('div', { class: 'time' }, hm(r.due)),
+      h('div', { class: 'what' }, h('div', { class: 'n' }, r.name + (r.test ? ' (test)' : '')),
+        h('div', { class: 'd' }, `${r.id} · ${r.recurring ? 'repeats' : 'one-off'}${r.arrivedAt ? ' · arrived ' + hm(r.arrivedAt) + (r.via ? ' (' + r.via + ')' : '') : r.status === 'missed' ? ' · no sign of it 5 min after its time' : r.status === 'waiting' ? ' · ' + until(r.due) : ''}`)),
+      h('span', { class: 'k-pill pill ' + PILL[r.status] }, WORD[r.status])))));
+}
+let last = null;
+prism.on('view', v => { last = v; render(v); });
+setInterval(() => last && render(last), 30000);
+prism.ready(async () => { last = await prism.call('view'); render(last); });
+</script>
+</body></html>
