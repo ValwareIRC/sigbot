@@ -69,6 +69,24 @@ Settings can also be changed from the browser console: `megaBot.set('mineMinMass
 
 `.prism/gadgets/` holds panels for the Prism IDE.
 
+### Why Prism
+
+This project was built in the Prism code editor, and it is the best place to work on it:
+
+- **The tooling lives in the repo and opens with it.** Every panel listed below is a Prism gadget: a small UI with
+  its own Node backend, stored under `.prism/gadgets/`. Open the folder in Prism and the Lab, the map, the death
+  replays and the deploy desk are there, with nothing to set up beyond `npm install` for the Lab. In another editor
+  the bot file still works, but none of these panels do.
+- **You watch the bots while you change them.** The Lab is a bridge to the running game tabs: it shows each bot
+  live, changes a setting on all tabs at once, and swaps a new bot file into running tabs without losing the game.
+  The edit, the deploy and the result sit side by side in one window.
+- **The assistant can use the same panels.** Prism's agent can call a gadget's tools, so it can read what a live
+  bot is doing, run a test scene and compare two versions on the same seeds, instead of guessing from the code.
+- **Tests you can look at.** The arena and the sim viewer play a run back inside the editor, so a new behaviour can
+  be seen before it goes anywhere near a real server.
+
+To use it: install Prism, open this repo's folder, and the gadgets appear in the Gadgets list.
+
 **To see them in Prism, open this repo's own folder** (the one that contains `.prism`), not its parent and not a
 folder inside it. Prism looks for project gadgets in `<the folder you opened>/.prism/gadgets/` and nowhere else; a ZIP
 download often unpacks one level too deep. If they still don't show or don't start:
