@@ -7,6 +7,8 @@ scripts for recorded games.
 > Unofficial fan project. Automating a game may be against its rules; use it at your own risk. The bot plays through
 > the normal game connection only: no captcha solving, no proxies, nothing beyond what a player's own client sends.
 
+<img width="1919" height="1031" alt="image" src="https://github.com/user-attachments/assets/cb2bdb3f-d83a-4b96-a135-7d5e82794778" />
+
 ## What the bot does
 
 - **Plays on its own**: grazes, hunts what it can eat, dodges what can eat it, escapes by splitting only when a much
